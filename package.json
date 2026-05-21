@@ -1,0 +1,45 @@
+{
+  "name": "db2-luw-mcp-server",
+  "version": "1.0.0",
+  "description": "Standalone DB2 LUW MCP server for internal HTTP deployment.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "db2-luw-mcp-server": "./dist/stdio.js"
+  },
+  "files": [
+    "dist",
+    "config",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "dev:stdio": "tsx src/stdio.ts",
+    "prepare": "npm run build",
+    "start": "node dist/index.js",
+    "start:stdio": "node dist/stdio.js",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "mcp",
+    "db2",
+    "ibm-db2",
+    "typescript"
+  ],
+  "author": "Maritime Ontario",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "ibm_db": "^4.0.1",
+    "pino": "^10.3.1",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "tsx": "^4.22.3",
+    "typescript": "^6.0.3",
+    "vitest": "^2.1.9"
+  }
+}

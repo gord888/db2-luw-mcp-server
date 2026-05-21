@@ -1,0 +1,26 @@
+tables:
+  - schema: "TMWIN"
+    table: "TLORDER"
+    businessName: "TruckMate Order"
+    description: "Primary freight order table used for bills, pickups, deliveries, and shipment-level reporting."
+    aliases:
+      - "order"
+      - "bill"
+      - "shipment"
+    owner: "Operations / IT"
+    sensitivity: "internal"
+    importantColumns:
+      - name: "BILL_NUMBER"
+        description: "Human-facing bill number."
+      - name: "DETAIL_LINE_ID"
+        description: "Internal order identifier used by many related tables."
+    relationships:
+      - target: "TMWIN.TLSHIPINSTRUCT"
+        type: "one-to-many"
+        join: "TLORDER.DETAIL_LINE_ID = TLSHIPINSTRUCT.ORDER_ID"
+        description: "Shipment instructions attached to an order."
+    exampleQuestions:
+      - "Find shipment instructions for a bill number."
+    exampleQueries:
+      - name: "Order by bill number"
+        sql: "select * from TMWIN.TLORDER where BILL_NUMBER = ? with ur"

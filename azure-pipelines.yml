@@ -1,0 +1,49 @@
+name: '$(Date:yyyy).$(Date:MM).$(Date:dd).$(Rev:r)'
+
+trigger:
+  branches:
+    include:
+      - main
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  nodeVersion: '20.x'
+  buildConfiguration: 'Release'
+  projectDirectory: '$(System.DefaultWorkingDirectory)'
+
+stages:
+- stage: Build
+  displayName: Build and test
+  jobs:
+  - job: Build
+    displayName: Build DB2 LUW MCP Server
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: NodeTool@0
+      displayName: Install Node.js
+      inputs:
+        versionSpec: '$(nodeVersion)'
+
+    - script: npm ci
+      displayName: Install dependencies
+      workingDirectory: '$(projectDirectory)'
+
+    - script: npm run build
+      displayName: Build project
+      workingDirectory: '$(projectDirectory)'
+
+    - script: npm run test
+      displayName: Run tests
+      workingDirectory: '$(projectDirectory)'
+
+    - task: PublishBuildArtifacts@1
+      displayName: Publish build artifacts
+      inputs:
+        PathtoPublish: '$(projectDirectory)'
+        ArtifactName: 'db2-luw-mcp-server'
+        publishLocation: 'Container'
