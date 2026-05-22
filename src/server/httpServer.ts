@@ -18,6 +18,40 @@ export interface HttpServerDependencies {
   auditLogger: AuditLogger;
 }
 
+const MCP_METHODS = new Set(['GET', 'POST', 'DELETE']);
+
+function setIncomingRawHeader(req: IncomingMessage, headerName: string, value: string): void {
+  const normalizedHeaderName = headerName.toLowerCase();
+
+  for (let index = 0; index < req.rawHeaders.length; index += 2) {
+    if (req.rawHeaders[index]?.toLowerCase() === normalizedHeaderName) {
+      req.rawHeaders[index + 1] = value;
+      return;
+    }
+  }
+
+  req.rawHeaders.push(headerName, value);
+}
+
+function normalizeMcpAcceptHeader(req: IncomingMessage): void {
+  const method = req.method ?? 'GET';
+  if (!MCP_METHODS.has(method)) {
+    return;
+  }
+
+  const existingAcceptHeader = req.headers.accept;
+  const firstValue = Array.isArray(existingAcceptHeader) ? existingAcceptHeader[0] : existingAcceptHeader;
+  const acceptsJson = firstValue?.includes('application/json') ?? false;
+  const acceptsEventStream = firstValue?.includes('text/event-stream') ?? false;
+
+  if (acceptsJson && acceptsEventStream) {
+    return;
+  }
+
+  req.headers.accept = 'application/json, text/event-stream';
+  setIncomingRawHeader(req, 'Accept', 'application/json, text/event-stream');
+}
+
 async function readJsonBody(req: IncomingMessage, maxBytes: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -85,9 +119,13 @@ async function handleMcp(
   res: ServerResponse,
   dependencies: HttpServerDependencies
 ): Promise<void> {
+  normalizeMcpAcceptHeader(req);
+
   const profile = authenticateRequest(req.headers, dependencies.config);
   const requestContext = createRequestContext(profile, req.method ?? 'POST', req.url ?? '/mcp');
-  const requestBody = await readJsonBody(req, dependencies.config.limits.requestBodyBytes);
+  const requestBody = (req.method ?? 'GET') === 'POST'
+    ? await readJsonBody(req, dependencies.config.limits.requestBodyBytes)
+    : undefined;
   const server = createMcpServer({
     config: dependencies.config,
     profile,
@@ -112,6 +150,10 @@ async function handleMcp(
 export function createHttpServer(dependencies: HttpServerDependencies): Server {
   return createServer(async (req, res) => {
     try {
+      const requestPath = req.url ?? '/';
+      const requestMethod = req.method ?? 'GET';
+      const isMcpRoute = requestPath === '/mcp' || requestPath === '/';
+
       if ((req.method ?? 'GET') === 'GET' && req.url === '/healthz') {
         writeJson(res, 200, {
           status: 'ok'
@@ -124,13 +166,13 @@ export function createHttpServer(dependencies: HttpServerDependencies): Server {
         return;
       }
 
-      if ((req.method ?? 'POST') === 'POST' && req.url === '/mcp') {
+      if (isMcpRoute && MCP_METHODS.has(requestMethod)) {
         await handleMcp(req, res, dependencies);
         return;
       }
 
-      if (req.url === '/mcp') {
-        res.setHeader('Allow', 'POST');
+      if (isMcpRoute) {
+        res.setHeader('Allow', 'GET, POST, DELETE');
         writeJson(res, 405, {
           error: 'Method Not Allowed'
         });
