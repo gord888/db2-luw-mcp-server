@@ -1,0 +1,79 @@
+server:
+  host: "0.0.0.0"
+  port: 3000
+  publicBaseUrl: "http://db2-mcp.internal:3000"
+  readinessAuthRequired: true
+
+limits:
+  maxRows: 1000
+  defaultPreviewRows: 50
+  queryTimeoutMs: 30000
+  metadataTimeoutMs: 15000
+  requestBodyBytes: 1048576
+
+descriptors:
+  files:
+    - "./descriptors.example.yaml"
+
+profiles:
+  readonly:
+    enabled: false
+    mode: "readonly"
+    apiKeyEnv: "DB2_MCP_API_KEY_READONLY"
+    callerLabel: "readonly"
+    db:
+      connectionStringEnv: "DB2_MCP_DB_READONLY"
+      targetLabel: "db2-luw-readonly"
+    tools:
+      - "list_schemas"
+      - "list_tables"
+      - "describe_table"
+      - "describe_index"
+      - "get_relationships"
+      - "get_table_context"
+      - "search_business_terms"
+      - "list_join_paths"
+      - "search_objects"
+      - "run_query"
+      - "preview_table"
+      - "explain_query"
+
+  readonly_procedures:
+    enabled: true
+    mode: "readonly_procedures"
+    apiKeyEnv: "DB2_MCP_API_KEY_READONLY_PROCEDURES"
+    callerLabel: "readonly_procedures"
+    db:
+      connectionStringEnv: "DB2_MCP_DB_READONLY_PROCEDURES"
+      targetLabel: "db2-luw-readonly-procedures"
+    tools:
+      - "list_schemas"
+      - "list_tables"
+      - "describe_table"
+      - "describe_index"
+      - "get_relationships"
+      - "get_table_context"
+      - "search_business_terms"
+      - "list_join_paths"
+      - "search_objects"
+      - "run_query"
+      - "preview_table"
+      - "explain_query"
+      - "list_procedures"
+      - "describe_procedure"
+      - "call_procedure"
+    procedureAllowlist:
+      - schema: "APP"
+        name: "SAFE_REPORT_PROC"
+      - schema: "OPS"
+        name: "SAFE_STATUS_PROC"
+
+  full:
+    enabled: false
+    mode: "full"
+    apiKeyEnv: "DB2_MCP_API_KEY_FULL"
+    callerLabel: "full"
+    db:
+      connectionStringEnv: "DB2_MCP_DB_FULL"
+      targetLabel: "db2-luw-full"
+    tools: []
