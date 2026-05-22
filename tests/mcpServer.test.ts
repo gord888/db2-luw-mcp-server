@@ -102,8 +102,11 @@ function createConfig(profile: ResolvedProfileConfig): ResolvedConfig {
   };
 }
 
-function createProfile(tools: ResolvedProfileConfig['tools']): ResolvedProfileConfig {
-  return {
+function createProfile(
+  tools: ResolvedProfileConfig['tools'],
+  overrides: Partial<ResolvedProfileConfig> = {}
+): ResolvedProfileConfig {
+  const baseProfile: ResolvedProfileConfig = {
     id: 'readonly',
     enabled: true,
     mode: 'readonly',
@@ -118,6 +121,15 @@ function createProfile(tools: ResolvedProfileConfig['tools']): ResolvedProfileCo
     },
     tools,
     procedureAllowlist: []
+  };
+
+  return {
+    ...baseProfile,
+    ...overrides,
+    db: {
+      ...baseProfile.db,
+      ...(overrides.db ?? {})
+    }
   };
 }
 
@@ -250,5 +262,278 @@ describe('MCP server integration', () => {
     expect(result.isError).toBe(true);
     expect(connected.auditLogger.events[0]?.outcome).toBe('error');
     expect(connected.auditLogger.events[0]?.errorCode).toBe('DB_EXECUTION_FAILED');
+  });
+
+  it('lists explicit full-mode DDL tools when enabled for the current profile', async () => {
+    const connected = await connectTestServer(
+      createProfile(
+        ['run_ddl', 'deploy_procedure', 'drop_procedure', 'deploy_function', 'drop_function', 'deploy_view', 'drop_view'],
+        {
+          id: 'full',
+          mode: 'full',
+          apiKeyEnv: 'FULL_KEY',
+          apiKey: 'full-key',
+          apiKeyHash: 'full-hash',
+          callerLabel: 'full',
+          db: {
+            connectionStringEnv: 'FULL_DB',
+            connectionString: 'DATABASE=SAMPLE;',
+            targetLabel: 'full-db'
+          }
+        }
+      ),
+      new FakeDb2ClientFactory(() => new FakeDb2Client(async () => ({
+        columns: [],
+        rows: [],
+        rowCount: 0,
+        warnings: []
+      })))
+    );
+    openServers.push(connected);
+
+    const tools = await connected.client.listTools();
+
+    expect(tools.tools.map((tool) => tool.name)).toEqual([
+      'run_ddl',
+      'deploy_procedure',
+      'drop_procedure',
+      'deploy_function',
+      'drop_function',
+      'deploy_view',
+      'drop_view'
+    ]);
+  });
+
+  it('deploys and drops procedures, functions, and views in full mode', async () => {
+    const executedStatements: string[] = [];
+    const connected = await connectTestServer(
+      createProfile(
+        ['run_ddl', 'deploy_procedure', 'drop_procedure', 'deploy_function', 'drop_function', 'deploy_view', 'drop_view'],
+        {
+          id: 'full',
+          mode: 'full',
+          apiKeyEnv: 'FULL_KEY',
+          apiKey: 'full-key',
+          apiKeyHash: 'full-hash',
+          callerLabel: 'full',
+          db: {
+            connectionStringEnv: 'FULL_DB',
+            connectionString: 'DATABASE=SAMPLE;',
+            targetLabel: 'full-db'
+          }
+        }
+      ),
+      new FakeDb2ClientFactory(() => new FakeDb2Client(async (sql) => {
+        executedStatements.push(sql);
+
+        return {
+          columns: [],
+          rows: [],
+          rowCount: 0,
+          warnings: []
+        };
+      }))
+    );
+    openServers.push(connected);
+
+    const runDdl = await connected.client.callTool({
+      name: 'run_ddl',
+      arguments: {
+        sql: 'ALTER VIEW APP.ACTIVE_ORDERS REGENERATE'
+      }
+    });
+    const deployProcedure = await connected.client.callTool({
+      name: 'deploy_procedure',
+      arguments: {
+        schema: 'app',
+        procedure: 'sync_orders',
+        sql: 'CREATE OR REPLACE PROCEDURE APP.SYNC_ORDERS() LANGUAGE SQL BEGIN DECLARE V_SYNC_COUNT INTEGER DEFAULT 1; END;'
+      }
+    });
+    const dropProcedure = await connected.client.callTool({
+      name: 'drop_procedure',
+      arguments: {
+        schema: 'app',
+        procedure: 'sync_orders'
+      }
+    });
+    const deployFunction = await connected.client.callTool({
+      name: 'deploy_function',
+      arguments: {
+        schema: 'app',
+        function: 'calc_score',
+        sql: 'CREATE OR REPLACE FUNCTION APP.CALC_SCORE(P_SCORE INTEGER) RETURNS INTEGER LANGUAGE SQL RETURN P_SCORE'
+      }
+    });
+    const dropFunction = await connected.client.callTool({
+      name: 'drop_function',
+      arguments: {
+        schema: 'app',
+        function: 'calc_score',
+        parameterTypes: ['INTEGER']
+      }
+    });
+    const deployView = await connected.client.callTool({
+      name: 'deploy_view',
+      arguments: {
+        schema: 'app',
+        view: 'active_orders',
+        sql: 'CREATE OR REPLACE VIEW APP.ACTIVE_ORDERS AS SELECT 1 AS ORDER_ID FROM SYSIBM.SYSDUMMY1'
+      }
+    });
+    const dropView = await connected.client.callTool({
+      name: 'drop_view',
+      arguments: {
+        schema: 'app',
+        view: 'active_orders'
+      }
+    });
+
+    expect(parseToolText(runDdl).statementType).toBe('ALTER');
+    expect(parseToolText(runDdl).sql).toBe('ALTER VIEW APP.ACTIVE_ORDERS REGENERATE');
+    expect(parseToolText(deployProcedure).objectName).toBe('APP.SYNC_ORDERS');
+    expect(parseToolText(dropProcedure).sql).toBe('DROP PROCEDURE "APP"."SYNC_ORDERS"');
+    expect(parseToolText(deployFunction).objectName).toBe('APP.CALC_SCORE');
+    expect(parseToolText(dropFunction).sql).toBe('DROP FUNCTION "APP"."CALC_SCORE"(INTEGER)');
+    expect(parseToolText(deployView).objectName).toBe('APP.ACTIVE_ORDERS');
+    expect(parseToolText(dropView).sql).toBe('DROP VIEW "APP"."ACTIVE_ORDERS"');
+    expect(executedStatements).toEqual([
+      'ALTER VIEW APP.ACTIVE_ORDERS REGENERATE',
+      'CREATE OR REPLACE PROCEDURE APP.SYNC_ORDERS() LANGUAGE SQL BEGIN DECLARE V_SYNC_COUNT INTEGER DEFAULT 1; END',
+      'DROP PROCEDURE "APP"."SYNC_ORDERS"',
+      'CREATE OR REPLACE FUNCTION APP.CALC_SCORE(P_SCORE INTEGER) RETURNS INTEGER LANGUAGE SQL RETURN P_SCORE',
+      'DROP FUNCTION "APP"."CALC_SCORE"(INTEGER)',
+      'CREATE OR REPLACE VIEW APP.ACTIVE_ORDERS AS SELECT 1 AS ORDER_ID FROM SYSIBM.SYSDUMMY1',
+      'DROP VIEW "APP"."ACTIVE_ORDERS"'
+    ]);
+  });
+
+  it('rejects deploy SQL that does not match the requested full-mode target', async () => {
+    const connected = await connectTestServer(
+      createProfile(['deploy_procedure'], {
+        id: 'full',
+        mode: 'full',
+        apiKeyEnv: 'FULL_KEY',
+        apiKey: 'full-key',
+        apiKeyHash: 'full-hash',
+        callerLabel: 'full',
+        db: {
+          connectionStringEnv: 'FULL_DB',
+          connectionString: 'DATABASE=SAMPLE;',
+          targetLabel: 'full-db'
+        }
+      }),
+      new FakeDb2ClientFactory(() => new FakeDb2Client(async () => ({
+        columns: [],
+        rows: [],
+        rowCount: 0,
+        warnings: []
+      })))
+    );
+    openServers.push(connected);
+
+    const result = await connected.client.callTool({
+      name: 'deploy_procedure',
+      arguments: {
+        schema: 'app',
+        procedure: 'sync_orders',
+        sql: 'CREATE OR REPLACE PROCEDURE APP.SYNC_CUSTOMERS() LANGUAGE SQL BEGIN END'
+      }
+    });
+
+    expect(result.isError).toBe(true);
+    expect(parseToolText(result).code).toBe('VALIDATION_ERROR');
+    expect(parseToolText(result).message).toContain('APP.SYNC_CUSTOMERS');
+  });
+
+  it('rejects non-DDL statements in run_ddl', async () => {
+    const connected = await connectTestServer(
+      createProfile(['run_ddl'], {
+        id: 'full',
+        mode: 'full',
+        apiKeyEnv: 'FULL_KEY',
+        apiKey: 'full-key',
+        apiKeyHash: 'full-hash',
+        callerLabel: 'full',
+        db: {
+          connectionStringEnv: 'FULL_DB',
+          connectionString: 'DATABASE=SAMPLE;',
+          targetLabel: 'full-db'
+        }
+      }),
+      new FakeDb2ClientFactory(() => new FakeDb2Client(async () => ({
+        columns: [],
+        rows: [],
+        rowCount: 0,
+        warnings: []
+      })))
+    );
+    openServers.push(connected);
+
+    const result = await connected.client.callTool({
+      name: 'run_ddl',
+      arguments: {
+        sql: 'select * from test_table'
+      }
+    });
+
+    expect(result.isError).toBe(true);
+    expect(parseToolText(result).code).toBe('VALIDATION_ERROR');
+    expect(parseToolText(result).message).toContain('run_ddl only allows DDL statements');
+  });
+
+  it('allows full mode to call procedures without checking the allowlist', async () => {
+    const connected = await connectTestServer(
+      createProfile(['call_procedure'], {
+        id: 'full',
+        mode: 'full',
+        apiKeyEnv: 'FULL_KEY',
+        apiKey: 'full-key',
+        apiKeyHash: 'full-hash',
+        callerLabel: 'full',
+        db: {
+          connectionStringEnv: 'FULL_DB',
+          connectionString: 'DATABASE=SAMPLE;',
+          targetLabel: 'full-db'
+        },
+        procedureAllowlist: []
+      }),
+      new FakeDb2ClientFactory(() => new FakeDb2Client(
+        async () => ({
+          columns: [],
+          rows: [],
+          rowCount: 0,
+          warnings: []
+        }),
+        undefined,
+        async (schema, name, params) => ({
+          rows: [{ STATUS: 'ok' }],
+          rowCount: 1,
+          outputParameters: {
+            schema,
+            name,
+            paramCount: params.length
+          },
+          warnings: []
+        })
+      ))
+    );
+    openServers.push(connected);
+
+    const result = await connected.client.callTool({
+      name: 'call_procedure',
+      arguments: {
+        schema: 'app',
+        procedure: 'non_allowlisted_proc',
+        params: [123]
+      }
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(parseToolText(result).outputParameters).toEqual({
+      schema: 'APP',
+      name: 'NON_ALLOWLISTED_PROC',
+      paramCount: 1
+    });
   });
 });

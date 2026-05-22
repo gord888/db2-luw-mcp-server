@@ -281,6 +281,10 @@ describe('HTTP MCP server compatibility', () => {
     expect(body).toContain('run_query');
     expect(body).toContain('list_procedures');
     expect(body).toContain('call_procedure');
+    expect(body).toContain('run_ddl');
+    expect(body).toContain('deploy_procedure');
+    expect(body).toContain('drop_function');
+    expect(body).toContain('deploy_view');
     expect(body).toContain('SYSPROC.GET_DBSIZE_INFO');
     expect(body).toContain('CALL SYSPROC.GET_DBSIZE_INFO(?, ?, ?, -1)');
     expect(body).toContain('CREATE OR REPLACE PROCEDURE DB2MCP_STATUS_CHECK()');
@@ -317,7 +321,7 @@ describe('HTTP MCP server compatibility', () => {
         connectionString: 'DATABASE=SAMPLE;',
         targetLabel: 'full-db'
       },
-      tools: ['run_query', 'call_procedure'],
+      tools: ['run_query', 'call_procedure', 'run_ddl', 'deploy_procedure', 'drop_procedure', 'deploy_function', 'drop_function', 'deploy_view', 'drop_view'],
       procedureAllowlist: []
     };
     const server = await startTestServer(
@@ -376,6 +380,9 @@ describe('HTTP MCP server compatibility', () => {
     expect(body).toContain('Stored procedure call succeeded.');
     expect(body).toContain('Create or replace procedure succeeded.');
     expect(body).toContain('CREATE OR REPLACE PROCEDURE DB2MCP_STATUS_CHECK()');
+    expect(body).toContain('run_ddl');
+    expect(body).toContain('deploy_procedure');
+    expect(body).toContain('drop_view');
   });
 
   it('marks health as degraded when the DB select check fails', async () => {

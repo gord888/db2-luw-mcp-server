@@ -4,6 +4,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { IMPLEMENTED_TOOL_NAMES, type ImplementedToolName } from '../config/types.js';
 import { AppError } from '../errors/AppError.js';
 import { isDeniedError, toAppError, toErrorPayload } from '../errors/errorMapper.js';
+import { getDdlToolDefinitions } from './ddlTools.js';
 import { getMetadataToolDefinitions, type ToolDefinition } from './metadataTools.js';
 import { getProcedureToolDefinitions } from './procedureTools.js';
 import { getQueryToolDefinitions } from './queryTools.js';
@@ -79,7 +80,8 @@ export function registerTools(server: McpServer, services: ToolServices): void {
   const definitions = [
     ...getMetadataToolDefinitions(),
     ...getQueryToolDefinitions(),
-    ...getProcedureToolDefinitions()
+    ...getProcedureToolDefinitions(),
+    ...getDdlToolDefinitions()
   ];
 
   const definitionMap = new Map(definitions.map((definition) => [definition.name, definition]));

@@ -126,4 +126,38 @@ profiles:
     expect(config.profiles.readonly.apiKey).toBe('unused-api-key-readonly');
     expect(config.profiles.readonly.db.connectionString).toBe('DATABASE=SAMPLE;');
   });
+
+  it('loads implemented full-mode DDL tools for enabled full profiles', async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'db2-mcp-config-'));
+    const configPath = path.join(tempDirectory, 'config.yaml');
+
+    process.env.DB2_MCP_API_KEY_FULL = 'full-key';
+    process.env.DB2_MCP_DB_FULL = 'DATABASE=SAMPLE;';
+
+    await writeFile(configPath, `
+server:
+  host: "127.0.0.1"
+  port: 3000
+limits:
+  maxRows: 1000
+  defaultPreviewRows: 50
+  queryTimeoutMs: 30000
+  metadataTimeoutMs: 15000
+profiles:
+  full:
+    mode: "full"
+    apiKeyEnv: "DB2_MCP_API_KEY_FULL"
+    db:
+      connectionStringEnv: "DB2_MCP_DB_FULL"
+    tools:
+      - "run_query"
+      - "run_ddl"
+      - "deploy_view"
+      - "drop_view"
+`, 'utf8');
+
+    const config = await loadConfig(configPath);
+
+    expect(config.profiles.full.tools).toEqual(['run_query', 'run_ddl', 'deploy_view', 'drop_view']);
+  });
 });

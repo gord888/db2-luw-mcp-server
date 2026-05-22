@@ -11,9 +11,23 @@ pr:
       - main
 
 variables:
-  nodeVersion: '20.x'
-  buildConfiguration: 'Release'
-  projectDirectory: '$(System.DefaultWorkingDirectory)'
+  - group: db2-luw-mcp-pipeline
+  - name: nodeVersion
+    value: '20.x'
+  - name: projectDirectory
+    value: '$(System.DefaultWorkingDirectory)'
+  - name: sourceArtifactName
+    value: 'db2-luw-mcp-source'
+  - name: containerArtifactName
+    value: 'db2-luw-mcp-image'
+  - name: sourceBundleFile
+    value: 'db2-luw-mcp-server-source.tgz'
+  - name: containerBundleFile
+    value: 'db2-luw-mcp-server-image.tar.gz'
+  - name: containerImageTag
+    value: '$(Build.SourceVersion)'
+  - name: containerStableTag
+    value: 'latest'
 
 stages:
 - stage: Build
@@ -41,9 +55,90 @@ stages:
       displayName: Run tests
       workingDirectory: '$(projectDirectory)'
 
-    - task: PublishBuildArtifacts@1
-      displayName: Publish build artifacts
+    - bash: |
+        mkdir -p "$(Build.ArtifactStagingDirectory)/source"
+        tar \
+          --exclude='./node_modules' \
+          --exclude='./dist' \
+          --exclude='./coverage' \
+          --exclude='./.git' \
+          --exclude='./tmp-*.mjs' \
+          -czf "$(Build.ArtifactStagingDirectory)/source/$(sourceBundleFile)" \
+          -C "$(projectDirectory)" .
+      displayName: Bundle source for container packaging
+
+    - task: PublishPipelineArtifact@1
+      displayName: Publish source bundle
       inputs:
-        PathtoPublish: '$(projectDirectory)'
-        ArtifactName: 'db2-luw-mcp-server'
-        publishLocation: 'Container'
+        targetPath: '$(Build.ArtifactStagingDirectory)/source'
+        artifact: '$(sourceArtifactName)'
+
+- stage: PackageContainer
+  displayName: Package container image
+  dependsOn: Build
+  jobs:
+  - job: Package
+    displayName: Build OCI image archive
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - download: current
+      artifact: '$(sourceArtifactName)'
+
+    - bash: |
+        mkdir -p "$(Pipeline.Workspace)/source"
+        tar -xzf "$(Pipeline.Workspace)/$(sourceArtifactName)/$(sourceBundleFile)" -C "$(Pipeline.Workspace)/source"
+      displayName: Extract source bundle
+
+    - bash: |
+        docker build \
+          --file "$(Pipeline.Workspace)/source/Dockerfile" \
+          --tag "$(containerRegistryLoginServer)/$(containerImageRepository):$(containerImageTag)" \
+          "$(Pipeline.Workspace)/source"
+      displayName: Build container image
+
+    - bash: |
+        mkdir -p "$(Build.ArtifactStagingDirectory)/image"
+        docker save "$(containerRegistryLoginServer)/$(containerImageRepository):$(containerImageTag)" \
+          | gzip > "$(Build.ArtifactStagingDirectory)/image/$(containerBundleFile)"
+      displayName: Export container image
+
+    - task: PublishPipelineArtifact@1
+      displayName: Publish container image bundle
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)/image'
+        artifact: '$(containerArtifactName)'
+
+- stage: PushContainer
+  displayName: Push container image
+  dependsOn: PackageContainer
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - job: Push
+    displayName: Push OCI image to registry
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - download: current
+      artifact: '$(containerArtifactName)'
+
+    - bash: |
+        echo "$(containerRegistryPassword)" | docker login "$(containerRegistryLoginServer)" \
+          --username "$(containerRegistryUsername)" \
+          --password-stdin
+      displayName: Authenticate to container registry
+
+    - bash: |
+        gunzip -c "$(Pipeline.Workspace)/$(containerArtifactName)/$(containerBundleFile)" | docker load
+      displayName: Load packaged container image
+
+    - bash: |
+        docker tag \
+          "$(containerRegistryLoginServer)/$(containerImageRepository):$(containerImageTag)" \
+          "$(containerRegistryLoginServer)/$(containerImageRepository):$(containerStableTag)"
+        docker push "$(containerRegistryLoginServer)/$(containerImageRepository):$(containerImageTag)"
+        docker push "$(containerRegistryLoginServer)/$(containerImageRepository):$(containerStableTag)"
+      displayName: Push image tags
+
+    - bash: docker logout "$(containerRegistryLoginServer)"
+      displayName: Logout from container registry

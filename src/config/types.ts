@@ -19,21 +19,30 @@ export const PROCEDURE_TOOL_NAMES = [
   'call_procedure'
 ] as const;
 
+export const FULL_DDL_TOOL_NAMES = [
+  'run_ddl',
+  'deploy_procedure',
+  'drop_procedure',
+  'deploy_function',
+  'drop_function',
+  'deploy_view',
+  'drop_view'
+] as const;
+
 export const FUTURE_TOOL_NAMES = [
   'insert_rows',
   'update_rows',
   'delete_rows',
   'upsert_rows',
   'run_sql_mutation',
-  'run_ddl',
-  'deploy_procedure',
   'execute_action',
   'collect_diagnostics'
 ] as const;
 
 export const IMPLEMENTED_TOOL_NAMES = [
   ...READONLY_TOOL_NAMES,
-  ...PROCEDURE_TOOL_NAMES
+  ...PROCEDURE_TOOL_NAMES,
+  ...FULL_DDL_TOOL_NAMES
 ] as const;
 
 export const TOOL_NAMES = [

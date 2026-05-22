@@ -9,6 +9,8 @@ Standalone internal MCP server for IBM DB2 LUW. Release 1 is HTTP-first, profile
 - Public `GET /healthz`, `GET /readyz`, and `GET /status`
 - API-key-to-profile auth with per-profile DB credentials
 - Read-only metadata/query tools plus allowlisted stored procedure execution
+- Full-mode deploy/drop tools for stored procedures, functions, and views
+- Full-mode generic `run_ddl` support for broader schema-definition work
 - Optional stdio entrypoint for local `npx` / linked-command use
 - Linux container packaging and Azure DevOps pipeline assets
 
@@ -36,6 +38,33 @@ Standalone internal MCP server for IBM DB2 LUW. Release 1 is HTTP-first, profile
 - `npm run dev:stdio`
 - `npm start`
 - `npm run start:stdio`
+
+## Azure DevOps pipeline
+
+The repo includes `azure-pipelines.yml` with three stages:
+
+1. `Build` installs Node.js, runs `npm ci`, `npm run build`, and `npm run test`
+2. `PackageContainer` builds the OCI image from `Dockerfile` and publishes a compressed image artifact
+3. `PushContainer` loads the packaged image and pushes it to your container registry on `main`
+
+The pipeline keeps private values out of YAML. It expects an Azure DevOps variable group named:
+
+```text
+db2-luw-mcp-pipeline
+```
+
+Populate that variable group with:
+
+| Variable | Purpose | Secret |
+| --- | --- | --- |
+| `containerRegistryLoginServer` | Container registry login server | No |
+| `containerImageRepository` | Repository path for the image | No |
+| `containerRegistryUsername` | Registry username or service account name | No |
+| `containerRegistryPassword` | Registry PAT / token used for `docker login` | **Yes** |
+
+For GHCR, the token is best stored as a **secret variable** in that variable group. If you want stronger secret management, back the variable group with **Azure Key Vault** and keep the pipeline YAML unchanged.
+
+The pipeline does not include Proxmox deployment steps yet.
 
 ## HTTP endpoints
 
@@ -165,7 +194,31 @@ profiles:
     enabled: true
 ```
 
-**Note:** the `full` profile currently exposes the same implemented query and procedure tools as `readonly_procedures`, and the status page adds a deeper create-or-replace procedure probe for permission validation.
+**Note:** the `full` profile includes the readonly + procedure tool set, unrestricted stored-procedure calls, generic `run_ddl`, and explicit `deploy_*` / `drop_*` tools for stored procedures, functions, and views. `deploy_*` handles create/update by running schema-qualified `CREATE` or `CREATE OR REPLACE` DDL, while `drop_*` removes the target object. The status page still adds a deeper create-or-replace procedure probe for permission validation.
+
+### Full-mode DDL tools
+
+The `full` profile now exposes these object-management tools:
+
+- `run_ddl`
+- `deploy_procedure`
+- `drop_procedure`
+- `deploy_function`
+- `drop_function`
+- `deploy_view`
+- `drop_view`
+
+`run_ddl` is the generic full-mode escape hatch for DDL. It currently accepts statements that start with `CREATE`, `ALTER`, `DROP`, `COMMENT`, or `RENAME`.
+
+`deploy_procedure`, `deploy_function`, and `deploy_view` require:
+
+- a `schema`
+- an object name (`procedure`, `function`, or `view`)
+- `sql` containing a matching schema-qualified `CREATE` or `CREATE OR REPLACE` statement
+
+`drop_procedure` and `drop_function` accept optional `parameterTypes` so overloaded routines can be dropped deterministically.
+
+In `full` mode, `call_procedure` does **not** enforce the procedure allowlist. The allowlist is only enforced in `readonly_procedures`.
 
 #### All profiles enabled
 

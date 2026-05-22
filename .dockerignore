@@ -4,3 +4,9 @@ coverage
 npm-debug.log*
 config/*.local.yaml
 .env
+.git
+.github
+scripts
+tests
+azure-pipelines.yml
+tmp-*.mjs

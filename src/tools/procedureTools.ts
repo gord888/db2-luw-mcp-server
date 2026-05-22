@@ -7,6 +7,15 @@ import { withDbClient } from './toolContext.js';
 
 const scalarSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 
+function canCallProcedure(
+  services: Parameters<ToolDefinition['handler']>[1],
+  schema: string,
+  procedure: string
+): boolean {
+  return services.profile.mode === 'full'
+    || isProcedureAllowlisted(services.profile.procedureAllowlist, schema, procedure);
+}
+
 export function getProcedureToolDefinitions(): ToolDefinition[] {
   return [
     {
@@ -53,7 +62,7 @@ export function getProcedureToolDefinitions(): ToolDefinition[] {
     },
     {
       name: 'describe_procedure',
-      description: 'Describe a stored procedure and whether it is allowlisted.',
+      description: 'Describe a stored procedure and whether the current profile may call it.',
       inputSchema: z.object({
         schema: z.string(),
         procedure: z.string()
@@ -94,7 +103,9 @@ export function getProcedureToolDefinitions(): ToolDefinition[] {
           data: {
             procedure: routine.rows[0] ?? null,
             parameters: parameters.rows,
-            allowlisted: isProcedureAllowlisted(services.profile.procedureAllowlist, normalizedSchema, normalizedProcedure)
+            allowlisted: isProcedureAllowlisted(services.profile.procedureAllowlist, normalizedSchema, normalizedProcedure),
+            callable: canCallProcedure(services, normalizedSchema, normalizedProcedure),
+            accessPolicy: services.profile.mode === 'full' ? 'unrestricted' : 'allowlist'
           },
           rowCount: parameters.rowCount,
           normalizedObjectNames: [`${normalizedSchema}.${normalizedProcedure}`]
@@ -103,7 +114,7 @@ export function getProcedureToolDefinitions(): ToolDefinition[] {
     },
     {
       name: 'call_procedure',
-      description: 'Call an allowlisted stored procedure.',
+      description: 'Call a stored procedure. readonly_procedures requires an allowlisted procedure; full mode can call any procedure.',
       inputSchema: z.object({
         schema: z.string(),
         procedure: z.string(),
@@ -112,7 +123,9 @@ export function getProcedureToolDefinitions(): ToolDefinition[] {
       handler: async ({ schema, procedure, params }, services) => {
         const normalizedSchema = schema.toUpperCase();
         const normalizedProcedure = procedure.toUpperCase();
-        assertProcedureAllowlisted(services.profile.procedureAllowlist, normalizedSchema, normalizedProcedure);
+        if (services.profile.mode !== 'full') {
+          assertProcedureAllowlisted(services.profile.procedureAllowlist, normalizedSchema, normalizedProcedure);
+        }
 
         return withDbClient(services, async (client) => {
           const result = await client.callProcedure(normalizedSchema, normalizedProcedure, params as Db2Parameter[], {

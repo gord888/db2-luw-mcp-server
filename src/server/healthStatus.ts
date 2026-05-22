@@ -1,6 +1,7 @@
 import type { Db2Client, Db2ClientFactory, Db2Parameter, QueryResult } from '../db2/Db2Client.js';
 import { toAppError } from '../errors/errorMapper.js';
 import {
+  FULL_DDL_TOOL_NAMES,
   PROCEDURE_TOOL_NAMES,
   READONLY_TOOL_NAMES,
   type AccessMode,
@@ -18,6 +19,7 @@ const DEFAULT_SERVICE_NAME = 'db2-luw-mcp-server';
 const STANDARD_PROFILE_ORDER = ['readonly', 'readonly_procedures', 'full'] as const;
 const DEFAULT_READONLY_PROCEDURES_ALLOWLIST = ['SYSPROC.GET_DBSIZE_INFO'];
 const SHARED_RW_TOOLS: ToolName[] = [...READONLY_TOOL_NAMES, ...PROCEDURE_TOOL_NAMES];
+const FULL_MODE_TOOLS: ToolName[] = [...SHARED_RW_TOOLS, ...FULL_DDL_TOOL_NAMES];
 const PROCEDURE_ACCESS_PROBE: { schema: string; name: string; params: Db2Parameter[] } = {
   schema: 'SYSPROC',
   name: 'GET_DBSIZE_INFO',
@@ -64,7 +66,7 @@ const STANDARD_PROFILE_DEFINITIONS: StandardProfileDefinition[] = [
     mode: 'full',
     callerLabel: 'full',
     dbTargetLabel: 'db2-luw-full',
-    tools: [...SHARED_RW_TOOLS],
+    tools: [...FULL_MODE_TOOLS],
     procedureAllowlist: []
   }
 ];
@@ -211,7 +213,7 @@ function buildStaticModeSignals(profile: {
     label: 'Full mode tool coverage',
     status: profile.tools.length > 0 ? 'ok' : 'warning',
     message: profile.tools.length > 0
-      ? `Full mode currently exposes ${profile.tools.length} implemented tool(s) while the status page runs an additional create-or-replace permission probe.`
+      ? `Full mode currently exposes ${profile.tools.length} implemented tool(s), including deploy/drop management for procedures, functions, and views, while the status page runs an additional create-or-replace permission probe.`
       : 'No tools are configured for this full profile.'
   });
 
