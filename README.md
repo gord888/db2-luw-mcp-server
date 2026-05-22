@@ -19,6 +19,7 @@ Standalone internal MCP server for IBM DB2 LUW. Release 1 is HTTP-first, profile
 | `.env.example` | Environment variable reference with all profile secrets |
 | `config\profiles.readonly.yaml` | Readonly-only config |
 | `config\profiles.readonly-procedures.yaml` | Readonly-with-stored-procedures-only config |
+| `config\profiles.all.yaml` | Enables readonly, readonly_procedures, and full together |
 | `config\profiles.full.yaml` | Full-profile-only config stub |
 | `config\profiles.example.yaml` | All profiles defined in one file |
 | `config\descriptors.example.yaml` | Example descriptor catalog |
@@ -63,6 +64,8 @@ The JSON health/readiness payloads include:
 - one entry per enabled profile
 - per-profile basic select result
 - conservative mode signals for `readonly`, `readonly_procedures`, and `full`
+- a safe stored-procedure probe for `readonly_procedures` using `CALL SYSPROC.GET_DBSIZE_INFO(?, ?, ?, -1)` when that profile is enabled
+- a safe catalog-based routine-create privilege probe for `full`, plus a suggested manual scratch-schema procedure definition using hardcoded value `4242`
 
 The HTML status page at `/status` shows the same information in a simple operator-friendly layout, including profiles that are currently not enabled in the active YAML.
 
@@ -74,6 +77,7 @@ The server reads its active YAML file from `DB2_MCP_CONFIG_PATH`.
 
 - `config/profiles.readonly.yaml`
 - `config/profiles.readonly-procedures.yaml`
+- `config/profiles.all.yaml`
 - `config/profiles.full.yaml`
 - `config/profiles.example.yaml`
 - `config/descriptors.example.yaml`
@@ -164,6 +168,26 @@ profiles:
 
 **Note:** the `full` profile is included as a deployment/configuration stub, but Release 1 does not yet expose any full-mode tools beyond what is already implemented for readonly/readonly_procedures.
 
+#### All profiles enabled
+
+Use:
+
+```text
+config/profiles.all.yaml
+```
+
+or in `config/profiles.example.yaml` set:
+
+```yaml
+profiles:
+  readonly:
+    enabled: true
+  readonly_procedures:
+    enabled: true
+  full:
+    enabled: true
+```
+
 ## Linux container deployment
 
 The repo now includes a deployment script that installs prerequisites, downloads the source, builds the app, writes a systemd unit, and starts the service.
@@ -207,6 +231,12 @@ Full profile stub:
 
 ```bash
 CONFIG_TEMPLATE=profiles.full.yaml /tmp/deploy-linux-mcp.sh
+```
+
+All profiles enabled:
+
+```bash
+CONFIG_TEMPLATE=profiles.all.yaml /tmp/deploy-linux-mcp.sh
 ```
 
 Deploy from a different repo/ref:

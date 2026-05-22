@@ -1,4 +1,4 @@
-import type { Db2ClientFactory, QueryResult } from '../db2/Db2Client.js';
+import type { Db2ClientFactory, Db2Parameter, QueryResult } from '../db2/Db2Client.js';
 import { toAppError } from '../errors/errorMapper.js';
 import {
   PROCEDURE_TOOL_NAMES,
@@ -10,10 +10,50 @@ import {
 } from '../config/types.js';
 
 const BASIC_SELECT_HEALTH_SQL = 'SELECT CURRENT TIMESTAMP AS CURRENT_TIMESTAMP FROM SYSIBM.SYSDUMMY1 WITH UR';
+const FULL_MODE_PRIVILEGE_SQL = `SELECT
+  RTRIM(CURRENT USER) AS AUTH_ID,
+  RTRIM(CURRENT SCHEMA) AS CURRENT_SCHEMA,
+  CASE
+    WHEN EXISTS (
+      SELECT 1
+      FROM SYSCAT.DBAUTH
+      WHERE GRANTEETYPE = 'U'
+        AND GRANTEE = CURRENT USER
+        AND DBADMAUTH = 'Y'
+    ) THEN 1
+    WHEN EXISTS (
+      SELECT 1
+      FROM SYSCAT.SCHEMATA
+      WHERE SCHEMANAME = CURRENT SCHEMA
+        AND DEFINER = CURRENT USER
+    ) THEN 1
+    WHEN EXISTS (
+      SELECT 1
+      FROM SYSCAT.SCHEMAAUTH
+      WHERE SCHEMANAME = CURRENT SCHEMA
+        AND GRANTEETYPE = 'U'
+        AND GRANTEE = CURRENT USER
+        AND CREATEINAUTH = 'Y'
+    ) THEN 1
+    ELSE 0
+  END AS CAN_CREATE_ROUTINE
+FROM SYSIBM.SYSDUMMY1
+WITH UR`;
+const FULL_MODE_MANUAL_PROBE_SQL = 'CREATE OR REPLACE PROCEDURE <schema>.DB2MCP_STATUS_CHECK() LANGUAGE SQL BEGIN DECLARE HEALTHCHECK_VALUE INTEGER DEFAULT 4242; END';
 const DEFAULT_RUNTIME_ENV_FILE = '/etc/db2-luw-mcp-server.env';
 const DEFAULT_SYSTEMD_UNIT = '/etc/systemd/system/db2-luw-mcp-server.service';
 const DEFAULT_SERVICE_NAME = 'db2-luw-mcp-server';
 const STANDARD_PROFILE_ORDER = ['readonly', 'readonly_procedures', 'full'] as const;
+const PROCEDURE_ACCESS_PROBE: { schema: string; name: string; params: Db2Parameter[] } = {
+  schema: 'SYSPROC',
+  name: 'GET_DBSIZE_INFO',
+  params: [
+    { direction: 'output', value: 0 },
+    { direction: 'output', value: 0 },
+    { direction: 'output', value: 0 },
+    -1
+  ]
+};
 
 type BasicSelectStatus = 'ok' | 'error' | 'skipped';
 type ProfileConfigurationStatus = 'enabled' | 'disabled' | 'not_configured';
@@ -115,7 +155,7 @@ function formatProcedureAllowlist(profile: Pick<ResolvedProfileConfig, 'procedur
   return profile.procedureAllowlist.map((entry) => `${entry.schema}.${entry.name}`);
 }
 
-function buildModeSignals(profile: {
+function buildStaticModeSignals(profile: {
   mode: AccessMode;
   enabled: boolean;
   configured: boolean;
@@ -167,6 +207,11 @@ function buildModeSignals(profile: {
         ? `${profile.procedureAllowlist.length} allowlisted procedure(s) configured: ${profile.procedureAllowlist.join(', ')}.`
         : 'No allowlisted procedures are configured.'
     });
+    signals.push({
+      label: 'Suggested procedure probe',
+      status: 'info',
+      message: 'Safe verification after enablement: CALL SYSPROC.GET_DBSIZE_INFO(?, ?, ?, -1).'
+    });
     return signals;
   }
 
@@ -177,8 +222,102 @@ function buildModeSignals(profile: {
       ? `Full mode is enabled with ${profile.tools.length} configured tool(s).`
       : 'Full mode is enabled, but no full-mode tools are configured in this build.'
   });
+  signals.push({
+    label: 'Catalog privilege probe',
+    status: 'info',
+    message: 'When enabled, the status page checks CREATEIN, schema ownership, and DBADM using SYSCAT.SCHEMAAUTH, SYSCAT.SCHEMATA, and SYSCAT.DBAUTH.'
+  });
+  signals.push({
+    label: 'Suggested manual create-routine probe',
+    status: 'info',
+    message: `For a controlled follow-up in a scratch schema, try: ${FULL_MODE_MANUAL_PROBE_SQL}`
+  });
 
   return signals;
+}
+
+async function collectRuntimeModeSignals(
+  profile: ResolvedProfileConfig,
+  client: ReturnType<Db2ClientFactory['create']>,
+  queryTimeoutMs: number
+): Promise<ProfileModeSignal[]> {
+  if (profile.mode === 'readonly') {
+    return [];
+  }
+
+  if (profile.mode === 'readonly_procedures') {
+    if (!profile.tools.includes(PROCEDURE_TOOL_NAMES[2])) {
+      return [{
+        label: 'Procedure execution probe',
+        status: 'warning',
+        message: 'Skipped because call_procedure is not enabled for this profile.'
+      }];
+    }
+
+    try {
+      await client.callProcedure(
+        PROCEDURE_ACCESS_PROBE.schema,
+        PROCEDURE_ACCESS_PROBE.name,
+        PROCEDURE_ACCESS_PROBE.params,
+        {
+          timeoutMs: queryTimeoutMs,
+          label: `${profile.id} procedure access check`
+        }
+      );
+
+      return [{
+        label: 'Procedure execution probe',
+        status: 'ok',
+        message: 'CALL SYSPROC.GET_DBSIZE_INFO(?, ?, ?, -1) completed successfully, which indicates stored procedure execution is available.'
+      }];
+    } catch (error) {
+      const appError = toAppError(error);
+
+      return [{
+        label: 'Procedure execution probe',
+        status: 'warning',
+        message: `CALL SYSPROC.GET_DBSIZE_INFO(?, ?, ?, -1) failed: ${appError.message}`
+      }];
+    }
+  }
+
+  try {
+    const result = await client.query<Record<string, unknown>>(FULL_MODE_PRIVILEGE_SQL, [], {
+      timeoutMs: queryTimeoutMs,
+      label: `${profile.id} routine create privilege check`
+    });
+    const firstRow = result.rows[0] ?? {};
+    const authId = String(firstRow.AUTH_ID ?? firstRow.auth_id ?? 'unknown');
+    const currentSchema = String(firstRow.CURRENT_SCHEMA ?? firstRow.current_schema ?? 'unknown');
+    const canCreateRoutine = Number(firstRow.CAN_CREATE_ROUTINE ?? firstRow.can_create_routine ?? 0) === 1;
+
+    return [
+      {
+        label: 'Routine create privilege probe',
+        status: canCreateRoutine ? 'ok' : 'warning',
+        message: canCreateRoutine
+          ? `Catalog privileges indicate ${authId} can likely create routines in schema ${currentSchema}.`
+          : `Catalog privileges did not confirm CREATEIN, schema ownership, or DBADM for ${authId} in schema ${currentSchema}.`
+      },
+      {
+        label: 'Suggested manual create-routine probe',
+        status: 'info',
+        message: `Current probe passed. For a controlled follow-up in a scratch schema, try: ${FULL_MODE_MANUAL_PROBE_SQL}`
+      }
+    ];
+  } catch (error) {
+    const appError = toAppError(error);
+
+    return [{
+      label: 'Routine create privilege probe',
+      status: 'warning',
+      message: `Unable to evaluate routine-create privileges from the catalog: ${appError.message}`
+    }, {
+      label: 'Suggested manual create-routine probe',
+      status: 'info',
+      message: `Catalog probe could not confirm access. For a controlled follow-up in a scratch schema, try: ${FULL_MODE_MANUAL_PROBE_SQL}`
+    }];
+  }
 }
 
 async function collectProfileHealth(
@@ -189,12 +328,20 @@ async function collectProfileHealth(
   const client = db2ClientFactory.create(profile);
   const checkedAt = new Date().toISOString();
   const procedureAllowlist = formatProcedureAllowlist(profile);
+  const staticModeSignals = buildStaticModeSignals({
+    mode: profile.mode,
+    enabled: true,
+    configured: true,
+    tools: profile.tools,
+    procedureAllowlist
+  });
 
   try {
     const result = await client.query<Record<string, unknown>>(BASIC_SELECT_HEALTH_SQL, [], {
       timeoutMs: queryTimeoutMs,
       label: `${profile.id} health check`
     });
+    const runtimeModeSignals = await collectRuntimeModeSignals(profile, client, queryTimeoutMs);
 
     return {
       id: profile.id,
@@ -214,13 +361,7 @@ async function collectProfileHealth(
         status: 'ok',
         currentTimestamp: extractCurrentTimestamp(result)
       },
-      modeSignals: buildModeSignals({
-        mode: profile.mode,
-        enabled: true,
-        configured: true,
-        tools: profile.tools,
-        procedureAllowlist
-      })
+      modeSignals: [...staticModeSignals, ...runtimeModeSignals]
     };
   } catch (error) {
     const appError = toAppError(error);
@@ -246,13 +387,7 @@ async function collectProfileHealth(
           message: appError.message
         }
       },
-      modeSignals: buildModeSignals({
-        mode: profile.mode,
-        enabled: true,
-        configured: true,
-        tools: profile.tools,
-        procedureAllowlist
-      })
+      modeSignals: staticModeSignals
     };
   } finally {
     await client.close().catch(() => undefined);
@@ -293,7 +428,7 @@ function buildInactiveProfileHealth(
         ? 'Profile is disabled, so no database check was run.'
         : 'Profile is not defined in the active config and is treated as disabled.'
     },
-    modeSignals: buildModeSignals({
+    modeSignals: buildStaticModeSignals({
       mode: profile.mode,
       enabled: false,
       configured,

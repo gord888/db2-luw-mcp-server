@@ -21,17 +21,23 @@ import { createHttpServer } from '../src/server/httpServer.js';
 
 class FakeDb2Client implements Db2Client {
   public constructor(
-    private readonly onQuery: (sql: string, params: Db2Parameter[], options: QueryOptions) => Promise<QueryResult<Record<string, unknown>>>
+    private readonly onQuery: (sql: string, params: Db2Parameter[], options: QueryOptions) => Promise<QueryResult<Record<string, unknown>>>,
+    private readonly onCallProcedure?: (schema: string, name: string, params: Db2Parameter[], options: QueryOptions) => Promise<ProcedureResult>
   ) {}
 
   public query<T = Record<string, unknown>>(sql: string, params: Db2Parameter[], options: QueryOptions): Promise<QueryResult<T>> {
     return this.onQuery(sql, params, options) as Promise<QueryResult<T>>;
   }
 
-  public callProcedure(_schema: string, _name: string, _params: Db2Parameter[], _options: QueryOptions): Promise<ProcedureResult> {
+  public callProcedure(schema: string, name: string, params: Db2Parameter[], options: QueryOptions): Promise<ProcedureResult> {
+    if (this.onCallProcedure) {
+      return this.onCallProcedure(schema, name, params, options);
+    }
+
     return Promise.resolve({
-      outParams: {},
-      resultSets: [],
+      rows: [],
+      rowCount: 0,
+      outputParameters: {},
       warnings: []
     });
   }
@@ -275,6 +281,96 @@ describe('HTTP MCP server compatibility', () => {
     expect(body).toContain('run_query');
     expect(body).toContain('list_procedures');
     expect(body).toContain('call_procedure');
+    expect(body).toContain('CALL SYSPROC.GET_DBSIZE_INFO(?, ?, ?, -1)');
+    expect(body).toContain('HEALTHCHECK_VALUE INTEGER DEFAULT 4242');
+  });
+
+  it('shows safe readonly_procedures and full-mode verification signals on the status page', async () => {
+    const readonlyProceduresProfile: ResolvedProfileConfig = {
+      ...createProfile(),
+      id: 'readonly_procedures',
+      mode: 'readonly_procedures',
+      apiKeyEnv: 'READONLY_PROCEDURES_KEY',
+      apiKey: 'readonly-procedures-key',
+      apiKeyHash: 'readonly-procedures-hash',
+      callerLabel: 'readonly_procedures',
+      db: {
+        connectionStringEnv: 'READONLY_PROCEDURES_DB',
+        connectionString: 'DATABASE=SAMPLE;',
+        targetLabel: 'readonly-procedures-db'
+      },
+      tools: ['run_query', 'call_procedure'],
+      procedureAllowlist: [{ schema: 'APP', name: 'SAFE_REPORT_PROC' }]
+    };
+    const fullProfile: ResolvedProfileConfig = {
+      ...createProfile(),
+      id: 'full',
+      mode: 'full',
+      apiKeyEnv: 'FULL_KEY',
+      apiKey: 'full-key',
+      apiKeyHash: 'full-hash',
+      callerLabel: 'full',
+      db: {
+        connectionStringEnv: 'FULL_DB',
+        connectionString: 'DATABASE=SAMPLE;',
+        targetLabel: 'full-db'
+      },
+      tools: [],
+      procedureAllowlist: []
+    };
+    const server = await startTestServer(
+      [readonlyProceduresProfile, fullProfile],
+      new FakeDb2ClientFactory((profile) => {
+        if (profile.id === 'readonly_procedures') {
+          return new FakeDb2Client(
+            async () => ({
+              columns: ['CURRENT_TIMESTAMP'],
+              rows: [{ CURRENT_TIMESTAMP: '2026-05-22-10.11.12.123456' }],
+              rowCount: 1,
+              warnings: []
+            }),
+            async (schema, name) => {
+              expect(schema).toBe('SYSPROC');
+              expect(name).toBe('GET_DBSIZE_INFO');
+
+              return {
+                rows: [],
+                rowCount: 0,
+                outputParameters: {},
+                warnings: []
+              };
+            }
+          );
+        }
+
+        return new FakeDb2Client(async (_sql, _params, options) => {
+          if (options.label?.includes('routine create privilege check')) {
+            return {
+              columns: ['AUTH_ID', 'CURRENT_SCHEMA', 'CAN_CREATE_ROUTINE'],
+              rows: [{ AUTH_ID: 'DB2USER', CURRENT_SCHEMA: 'APP', CAN_CREATE_ROUTINE: 1 }],
+              rowCount: 1,
+              warnings: []
+            };
+          }
+
+          return {
+            columns: ['CURRENT_TIMESTAMP'],
+            rows: [{ CURRENT_TIMESTAMP: '2026-05-22-10.11.12.123456' }],
+            rowCount: 1,
+            warnings: []
+          };
+        });
+      })
+    );
+    openServers.push(server);
+
+    const response = await fetch(`${server.url}/status`);
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toContain('CALL SYSPROC.GET_DBSIZE_INFO(?, ?, ?, -1) completed successfully');
+    expect(body).toContain('Catalog privileges indicate DB2USER can likely create routines in schema APP');
+    expect(body).toContain('HEALTHCHECK_VALUE INTEGER DEFAULT 4242');
   });
 
   it('marks health as degraded when the DB select check fails', async () => {
