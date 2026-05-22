@@ -19,6 +19,14 @@ function isDirectionalParameter(parameter: Db2Parameter): parameter is Db2Direct
   return typeof parameter === 'object' && parameter !== null && 'direction' in parameter;
 }
 
+function normalizeScalarValue(value: Db2DirectionalParameter['value']): string | number {
+  if (typeof value === 'boolean') {
+    return value ? 1 : 0;
+  }
+
+  return value ?? '';
+}
+
 function toSqlParam(parameter: Db2Parameter): SQLParam {
   if (!isDirectionalParameter(parameter)) {
     if (typeof parameter === 'boolean') {
@@ -36,8 +44,11 @@ function toSqlParam(parameter: Db2Parameter): SQLParam {
 
   return {
     ParamType: directionMap[parameter.direction],
-    Data: typeof parameter.value === 'number' ? parameter.value : ''
-  };
+    Data: normalizeScalarValue(parameter.value),
+    DataType: parameter.sqlType,
+    CType: parameter.cType,
+    Length: parameter.length
+  } as unknown as SQLParam;
 }
 
 function normalizeRows<T>(rows: unknown): T[] {
@@ -46,6 +57,54 @@ function normalizeRows<T>(rows: unknown): T[] {
   }
 
   return rows.filter((row): row is T => typeof row === 'object' && row !== null);
+}
+
+function normalizeProcedureResult(result: unknown): ProcedureResult {
+  if (!Array.isArray(result)) {
+    return {
+      rows: [],
+      rowCount: 0,
+      outputParameters: {},
+      warnings: []
+    };
+  }
+
+  const rows: Record<string, unknown>[] = [];
+  const outputValues: unknown[] = [];
+
+  for (const item of result) {
+    if (Array.isArray(item)) {
+      rows.push(...normalizeRows<Record<string, unknown>>(item));
+      continue;
+    }
+
+    if (typeof item === 'object' && item !== null) {
+      rows.push(item as Record<string, unknown>);
+      continue;
+    }
+
+    outputValues.push(item);
+  }
+
+  return {
+    rows,
+    rowCount: rows.length,
+    outputParameters: outputValues.reduce<Record<string, unknown>>((accumulator, value, index) => {
+      accumulator[`param${index + 1}`] = value;
+      return accumulator;
+    }, {
+      values: outputValues
+    }),
+    warnings: []
+  };
+}
+
+function formatDriverErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return '';
+  }
+
+  return error.message;
 }
 
 async function withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
@@ -106,7 +165,15 @@ export class IbmDb2Client implements Db2Client {
           warnings: []
         };
       } catch (error) {
-        throw new AppError('DB_EXECUTION_FAILED', `DB2 query failed for ${options.label ?? 'query'}.`, 500, error);
+        const driverMessage = formatDriverErrorMessage(error);
+        throw new AppError(
+          'DB_EXECUTION_FAILED',
+          driverMessage
+            ? `DB2 query failed for ${options.label ?? 'query'}: ${driverMessage}`
+            : `DB2 query failed for ${options.label ?? 'query'}.`,
+          500,
+          error
+        );
       }
     }, options.timeoutMs);
   }
@@ -117,17 +184,17 @@ export class IbmDb2Client implements Db2Client {
       const sql = `CALL ${schema}.${name}(${placeholders})`;
 
       try {
-        const rows = await database.query(sql, params.map(toSqlParam));
-        const normalizedRows = normalizeRows<Record<string, unknown>>(rows);
-
-        return {
-          rows: normalizedRows,
-          rowCount: normalizedRows.length,
-          outputParameters: {},
-          warnings: []
-        };
+        return normalizeProcedureResult(await database.query(sql, params.map(toSqlParam)));
       } catch (error) {
-        throw new AppError('DB_EXECUTION_FAILED', `Stored procedure ${schema}.${name} failed.`, 500, error);
+        const driverMessage = formatDriverErrorMessage(error);
+        throw new AppError(
+          'DB_EXECUTION_FAILED',
+          driverMessage
+            ? `Stored procedure ${schema}.${name} failed: ${driverMessage}`
+            : `Stored procedure ${schema}.${name} failed.`,
+          500,
+          error
+        );
       }
     }, options.timeoutMs);
   }

@@ -7,6 +7,7 @@ export interface Db2DirectionalParameter {
   value: Db2Scalar;
   sqlType?: string;
   cType?: string;
+  length?: number;
 }
 
 export type Db2Parameter = Db2Scalar | Db2DirectionalParameter;

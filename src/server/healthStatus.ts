@@ -22,10 +22,10 @@ const PROCEDURE_ACCESS_PROBE: { schema: string; name: string; params: Db2Paramet
   schema: 'SYSPROC',
   name: 'GET_DBSIZE_INFO',
   params: [
-    { direction: 'output', value: 0 },
-    { direction: 'output', value: 0 },
-    { direction: 'output', value: 0 },
-    -1
+    { direction: 'output', value: '', sqlType: 'TIMESTAMP', length: 30 },
+    { direction: 'output', value: '', length: 30 },
+    { direction: 'output', value: '', length: 30 },
+    { direction: 'input', value: -1, sqlType: 'INTEGER' }
   ]
 };
 
@@ -280,7 +280,7 @@ async function runProcedureAccessCheck(client: Db2Client, queryTimeoutMs: number
   const checkedAt = new Date().toISOString();
 
   try {
-    await client.callProcedure(
+    const result = await client.callProcedure(
       PROCEDURE_ACCESS_PROBE.schema,
       PROCEDURE_ACCESS_PROBE.name,
       PROCEDURE_ACCESS_PROBE.params,
@@ -295,7 +295,7 @@ async function runProcedureAccessCheck(client: Db2Client, queryTimeoutMs: number
       command: PROCEDURE_ACCESS_PROBE_COMMAND,
       checkedAt,
       status: 'ok',
-      detail: 'Stored procedure call succeeded.'
+      detail: `Stored procedure call succeeded. Snapshot timestamp: ${String(result.outputParameters.param1 ?? 'unknown')}, database size: ${String(result.outputParameters.param2 ?? 'unknown')}, database capacity: ${String(result.outputParameters.param3 ?? 'unknown')}.`
     };
   } catch (error) {
     return {
