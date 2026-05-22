@@ -87,7 +87,9 @@ function createProfile(): ResolvedProfileConfig {
   };
 }
 
-function createConfig(profile: ResolvedProfileConfig): ResolvedConfig {
+function createConfig(profiles: ResolvedProfileConfig | ResolvedProfileConfig[]): ResolvedConfig {
+  const profileList = Array.isArray(profiles) ? profiles : [profiles];
+
   return {
     configPath: '/test/config.yaml',
     server: {
@@ -104,14 +106,12 @@ function createConfig(profile: ResolvedProfileConfig): ResolvedConfig {
       requestBodyBytes: 1024 * 1024
     },
     descriptorFiles: [],
-    profiles: {
-      [profile.id]: profile
-    }
+    profiles: Object.fromEntries(profileList.map((profile) => [profile.id, profile]))
   };
 }
 
 async function startTestServer(
-  profile: ResolvedProfileConfig = createProfile(),
+  profiles: ResolvedProfileConfig | ResolvedProfileConfig[] = createProfile(),
   factory: Db2ClientFactory = new FakeDb2ClientFactory(() => new FakeDb2Client(async () => ({
     columns: ['CURRENT_TIMESTAMP'],
     rows: [{ CURRENT_TIMESTAMP: '2026-05-22T10:00:00.000000' }],
@@ -120,7 +120,7 @@ async function startTestServer(
   })))
 ): Promise<{ url: string; close: () => Promise<void> }> {
   const server = createHttpServer({
-    config: createConfig(profile),
+    config: createConfig(profiles),
     descriptorCatalog: DescriptorCatalog.empty(),
     db2ClientFactory: factory,
     auditLogger: new MemoryAuditLogger()
@@ -248,14 +248,8 @@ describe('HTTP MCP server compatibility', () => {
   });
 
   it('returns a public status page with file locations and profile details', async () => {
-    const profile = {
-      ...createProfile(),
-      mode: 'readonly_procedures' as const,
-      tools: ['run_query', 'call_procedure'] as const,
-      procedureAllowlist: [{ schema: 'APP', name: 'SAFE_REPORT_PROC' }]
-    };
     const server = await startTestServer(
-      profile,
+      createProfile(),
       new FakeDb2ClientFactory(() => new FakeDb2Client(async () => ({
         columns: ['CURRENT_TIMESTAMP'],
         rows: [{ CURRENT_TIMESTAMP: '2026-05-22-10.11.12.123456' }],
@@ -273,8 +267,14 @@ describe('HTTP MCP server compatibility', () => {
     expect(body).toContain('DB2 LUW MCP Status');
     expect(body).toContain('/etc/db2-luw-mcp-server.env');
     expect(body).toContain('/etc/systemd/system/db2-luw-mcp-server.service');
+    expect(body).toContain('Not enabled');
+    expect(body).toContain('Not defined in active YAML');
+    expect(body).toContain('readonly');
     expect(body).toContain('readonly_procedures');
-    expect(body).toContain('SAFE_REPORT_PROC');
+    expect(body).toContain('full');
+    expect(body).toContain('run_query');
+    expect(body).toContain('list_procedures');
+    expect(body).toContain('call_procedure');
   });
 
   it('marks health as degraded when the DB select check fails', async () => {

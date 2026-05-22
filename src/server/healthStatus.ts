@@ -2,15 +2,53 @@ import type { Db2ClientFactory, QueryResult } from '../db2/Db2Client.js';
 import { toAppError } from '../errors/errorMapper.js';
 import {
   PROCEDURE_TOOL_NAMES,
+  READONLY_TOOL_NAMES,
   type AccessMode,
   type ResolvedConfig,
-  type ResolvedProfileConfig
+  type ResolvedProfileConfig,
+  type ToolName
 } from '../config/types.js';
 
 const BASIC_SELECT_HEALTH_SQL = 'SELECT CURRENT TIMESTAMP AS CURRENT_TIMESTAMP FROM SYSIBM.SYSDUMMY1 WITH UR';
 const DEFAULT_RUNTIME_ENV_FILE = '/etc/db2-luw-mcp-server.env';
 const DEFAULT_SYSTEMD_UNIT = '/etc/systemd/system/db2-luw-mcp-server.service';
 const DEFAULT_SERVICE_NAME = 'db2-luw-mcp-server';
+const STANDARD_PROFILE_ORDER = ['readonly', 'readonly_procedures', 'full'] as const;
+
+type BasicSelectStatus = 'ok' | 'error' | 'skipped';
+type ProfileConfigurationStatus = 'enabled' | 'disabled' | 'not_configured';
+
+interface StandardProfileDefinition {
+  id: string;
+  mode: AccessMode;
+  callerLabel: string;
+  dbTargetLabel: string;
+  tools: ToolName[];
+}
+
+const STANDARD_PROFILE_DEFINITIONS: StandardProfileDefinition[] = [
+  {
+    id: 'readonly',
+    mode: 'readonly',
+    callerLabel: 'readonly',
+    dbTargetLabel: 'db2-luw-readonly',
+    tools: [...READONLY_TOOL_NAMES]
+  },
+  {
+    id: 'readonly_procedures',
+    mode: 'readonly_procedures',
+    callerLabel: 'readonly_procedures',
+    dbTargetLabel: 'db2-luw-readonly-procedures',
+    tools: [...READONLY_TOOL_NAMES, ...PROCEDURE_TOOL_NAMES]
+  },
+  {
+    id: 'full',
+    mode: 'full',
+    callerLabel: 'full',
+    dbTargetLabel: 'db2-luw-full',
+    tools: []
+  }
+];
 
 export interface ProfileModeSignal {
   label: string;
@@ -24,13 +62,18 @@ export interface ProfileHealthStatus {
   callerLabel?: string;
   dbTargetLabel: string;
   enabled: boolean;
+  configured: boolean;
+  configurationStatus: ProfileConfigurationStatus;
+  tools: ToolName[];
   toolCount: number;
+  procedureAllowlist: string[];
   procedureAllowlistCount: number;
   basicSelect: {
     sql: string;
     checkedAt: string;
-    status: 'ok' | 'error';
+    status: BasicSelectStatus;
     currentTimestamp?: string;
+    skippedReason?: string;
     error?: {
       code: string;
       message: string;
@@ -53,6 +96,7 @@ export interface ServiceHealthSummary {
     systemdUnit: string;
     serviceName: string;
   };
+  profiles: ProfileHealthStatus[];
   enabledProfiles: ProfileHealthStatus[];
   notes: string[];
 }
@@ -67,20 +111,43 @@ function extractCurrentTimestamp(result: QueryResult<Record<string, unknown>>): 
   return candidate === undefined ? undefined : String(candidate);
 }
 
-function buildModeSignals(profile: ResolvedProfileConfig): ProfileModeSignal[] {
+function formatProcedureAllowlist(profile: Pick<ResolvedProfileConfig, 'procedureAllowlist'>): string[] {
+  return profile.procedureAllowlist.map((entry) => `${entry.schema}.${entry.name}`);
+}
+
+function buildModeSignals(profile: {
+  mode: AccessMode;
+  enabled: boolean;
+  configured: boolean;
+  tools: ToolName[];
+  procedureAllowlist: string[];
+}): ProfileModeSignal[] {
   const signals: ProfileModeSignal[] = [
     {
+      label: 'Profile state',
+      status: profile.enabled ? 'ok' : 'warning',
+      message: profile.enabled
+        ? 'Enabled in the active config.'
+        : profile.configured
+          ? 'Present in the active config, but disabled.'
+          : 'Not defined in the active config and treated as disabled.'
+    },
+    {
       label: 'Configured tools',
-      status: 'info',
-      message: `${profile.tools.length} configured tool(s).`
+      status: profile.tools.length > 0 ? 'info' : 'warning',
+      message: profile.tools.length > 0
+        ? `${profile.tools.length} configured tool(s).`
+        : 'No tools are configured for this profile.'
     }
   ];
 
   if (profile.mode === 'readonly') {
     signals.push({
       label: 'Readonly validation',
-      status: 'ok',
-      message: 'Basic select health confirms this key can connect and execute a readonly query.'
+      status: profile.enabled ? 'ok' : 'info',
+      message: profile.enabled
+        ? 'Basic select health confirms this key can connect and execute a readonly query.'
+        : 'Enable this profile to run the readonly DB health validation.'
     });
     return signals;
   }
@@ -97,7 +164,7 @@ function buildModeSignals(profile: ResolvedProfileConfig): ProfileModeSignal[] {
       label: 'Procedure allowlist',
       status: profile.procedureAllowlist.length > 0 ? 'ok' : 'warning',
       message: profile.procedureAllowlist.length > 0
-        ? `${profile.procedureAllowlist.length} allowlisted procedure(s) configured: ${profile.procedureAllowlist.map((entry) => `${entry.schema}.${entry.name}`).join(', ')}.`
+        ? `${profile.procedureAllowlist.length} allowlisted procedure(s) configured: ${profile.procedureAllowlist.join(', ')}.`
         : 'No allowlisted procedures are configured.'
     });
     return signals;
@@ -121,6 +188,7 @@ async function collectProfileHealth(
 ): Promise<ProfileHealthStatus> {
   const client = db2ClientFactory.create(profile);
   const checkedAt = new Date().toISOString();
+  const procedureAllowlist = formatProcedureAllowlist(profile);
 
   try {
     const result = await client.query<Record<string, unknown>>(BASIC_SELECT_HEALTH_SQL, [], {
@@ -133,8 +201,12 @@ async function collectProfileHealth(
       mode: profile.mode,
       callerLabel: profile.callerLabel,
       dbTargetLabel: profile.db.targetLabel,
-      enabled: profile.enabled,
+      enabled: true,
+      configured: true,
+      configurationStatus: 'enabled',
+      tools: profile.tools,
       toolCount: profile.tools.length,
+      procedureAllowlist,
       procedureAllowlistCount: profile.procedureAllowlist.length,
       basicSelect: {
         sql: BASIC_SELECT_HEALTH_SQL,
@@ -142,7 +214,13 @@ async function collectProfileHealth(
         status: 'ok',
         currentTimestamp: extractCurrentTimestamp(result)
       },
-      modeSignals: buildModeSignals(profile)
+      modeSignals: buildModeSignals({
+        mode: profile.mode,
+        enabled: true,
+        configured: true,
+        tools: profile.tools,
+        procedureAllowlist
+      })
     };
   } catch (error) {
     const appError = toAppError(error);
@@ -152,8 +230,12 @@ async function collectProfileHealth(
       mode: profile.mode,
       callerLabel: profile.callerLabel,
       dbTargetLabel: profile.db.targetLabel,
-      enabled: profile.enabled,
+      enabled: true,
+      configured: true,
+      configurationStatus: 'enabled',
+      tools: profile.tools,
       toolCount: profile.tools.length,
+      procedureAllowlist,
       procedureAllowlistCount: profile.procedureAllowlist.length,
       basicSelect: {
         sql: BASIC_SELECT_HEALTH_SQL,
@@ -164,23 +246,112 @@ async function collectProfileHealth(
           message: appError.message
         }
       },
-      modeSignals: buildModeSignals(profile)
+      modeSignals: buildModeSignals({
+        mode: profile.mode,
+        enabled: true,
+        configured: true,
+        tools: profile.tools,
+        procedureAllowlist
+      })
     };
   } finally {
     await client.close().catch(() => undefined);
   }
 }
 
+function buildInactiveProfileHealth(
+  profile: {
+    id: string;
+    mode: AccessMode;
+    callerLabel?: string;
+    dbTargetLabel: string;
+    tools: ToolName[];
+    procedureAllowlist: string[];
+  },
+  configurationStatus: Exclude<ProfileConfigurationStatus, 'enabled'>
+): ProfileHealthStatus {
+  const checkedAt = new Date().toISOString();
+  const configured = configurationStatus === 'disabled';
+
+  return {
+    id: profile.id,
+    mode: profile.mode,
+    callerLabel: profile.callerLabel,
+    dbTargetLabel: profile.dbTargetLabel,
+    enabled: false,
+    configured,
+    configurationStatus,
+    tools: profile.tools,
+    toolCount: profile.tools.length,
+    procedureAllowlist: profile.procedureAllowlist,
+    procedureAllowlistCount: profile.procedureAllowlist.length,
+    basicSelect: {
+      sql: BASIC_SELECT_HEALTH_SQL,
+      checkedAt,
+      status: 'skipped',
+      skippedReason: configured
+        ? 'Profile is disabled, so no database check was run.'
+        : 'Profile is not defined in the active config and is treated as disabled.'
+    },
+    modeSignals: buildModeSignals({
+      mode: profile.mode,
+      enabled: false,
+      configured,
+      tools: profile.tools,
+      procedureAllowlist: profile.procedureAllowlist
+    })
+  };
+}
+
+function sortProfiles(profiles: ProfileHealthStatus[]): ProfileHealthStatus[] {
+  return [...profiles].sort((left, right) => {
+    const leftIndex = STANDARD_PROFILE_ORDER.indexOf(left.id as typeof STANDARD_PROFILE_ORDER[number]);
+    const rightIndex = STANDARD_PROFILE_ORDER.indexOf(right.id as typeof STANDARD_PROFILE_ORDER[number]);
+
+    if (leftIndex !== -1 || rightIndex !== -1) {
+      return (leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex)
+        - (rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex);
+    }
+
+    return left.id.localeCompare(right.id);
+  });
+}
+
 export async function collectServiceHealthSummary(
   config: ResolvedConfig,
   db2ClientFactory: Db2ClientFactory
 ): Promise<ServiceHealthSummary> {
-  const enabledProfiles = Object.values(config.profiles).filter((profile) => profile.enabled);
-  const profileSummaries = await Promise.all(
-    enabledProfiles.map(async (profile) => collectProfileHealth(profile, db2ClientFactory, config.limits.queryTimeoutMs))
+  const configuredProfiles = Object.values(config.profiles);
+  const configuredProfileSummaries = await Promise.all(
+    configuredProfiles.map(async (profile) => (
+      profile.enabled
+        ? collectProfileHealth(profile, db2ClientFactory, config.limits.queryTimeoutMs)
+        : Promise.resolve(buildInactiveProfileHealth({
+          id: profile.id,
+          mode: profile.mode,
+          callerLabel: profile.callerLabel,
+          dbTargetLabel: profile.db.targetLabel,
+          tools: profile.tools,
+          procedureAllowlist: formatProcedureAllowlist(profile)
+        }, 'disabled'))
+    ))
   );
 
-  const hasFailures = profileSummaries.some((profile) => profile.basicSelect.status === 'error');
+  const configuredProfileIds = new Set(configuredProfiles.map((profile) => profile.id));
+  const implicitProfiles = STANDARD_PROFILE_DEFINITIONS
+    .filter((profile) => !configuredProfileIds.has(profile.id))
+    .map((profile) => buildInactiveProfileHealth({
+      id: profile.id,
+      mode: profile.mode,
+      callerLabel: profile.callerLabel,
+      dbTargetLabel: profile.dbTargetLabel,
+      tools: profile.tools,
+      procedureAllowlist: []
+    }, 'not_configured'));
+
+  const profiles = sortProfiles([...configuredProfileSummaries, ...implicitProfiles]);
+  const enabledProfiles = profiles.filter((profile) => profile.enabled);
+  const hasFailures = enabledProfiles.some((profile) => profile.basicSelect.status === 'error');
   const notes: string[] = [
     'Recommended deployment validation: call /healthz and run an MCP query such as select * from tmwin.tlorder limit 1.'
   ];
@@ -203,7 +374,8 @@ export async function collectServiceHealthSummary(
       systemdUnit: DEFAULT_SYSTEMD_UNIT,
       serviceName: DEFAULT_SERVICE_NAME
     },
-    enabledProfiles: profileSummaries,
+    profiles,
+    enabledProfiles,
     notes
   };
 }
@@ -225,6 +397,14 @@ function renderModeSignals(signals: ProfileModeSignal[]): string {
   return `<ul>${signals.map((signal) => `<li><strong>${escapeHtml(signal.label)}:</strong> ${escapeHtml(signal.message)}</li>`).join('')}</ul>`;
 }
 
+function renderToolList(tools: ToolName[]): string {
+  if (tools.length === 0) {
+    return '<em>None</em>';
+  }
+
+  return `<ul>${tools.map((tool) => `<li><code>${escapeHtml(tool)}</code></li>`).join('')}</ul>`;
+}
+
 function renderDescriptorFiles(descriptorFiles: string[]): string {
   if (descriptorFiles.length === 0) {
     return '<li><strong>Descriptor files:</strong> None configured</li>';
@@ -235,21 +415,33 @@ function renderDescriptorFiles(descriptorFiles: string[]): string {
     .join('');
 }
 
+function renderBasicSelect(profile: ProfileHealthStatus): string {
+  if (profile.basicSelect.status === 'ok') {
+    return `<span style="color:#0f766e;font-weight:bold;">ok</span><br><small>${escapeHtml(profile.basicSelect.currentTimestamp ?? 'timestamp unavailable')}</small>`;
+  }
+
+  if (profile.basicSelect.status === 'error') {
+    return `<span style="color:#b91c1c;font-weight:bold;">error</span><br><small>${escapeHtml(profile.basicSelect.error?.message ?? 'Unknown error')}</small>`;
+  }
+
+  return `<span style="color:#92400e;font-weight:bold;">skipped</span><br><small>${escapeHtml(profile.basicSelect.skippedReason ?? 'No database check was run.')}</small>`;
+}
+
 export function renderStatusPage(summary: ServiceHealthSummary): string {
   const statusColor = summary.status === 'ok' ? '#0f766e' : '#b91c1c';
-  const profileRows = summary.enabledProfiles.length > 0
-    ? summary.enabledProfiles.map((profile) => `
+  const profileRows = summary.profiles.length > 0
+    ? summary.profiles.map((profile) => `
         <tr>
           <td>${escapeHtml(profile.id)}</td>
+          <td>${profile.enabled ? '<strong>Enabled</strong>' : '<strong>Not enabled</strong>'}${!profile.configured ? '<br><small>Not defined in active YAML</small>' : ''}</td>
           <td>${escapeHtml(profile.mode)}</td>
           <td>${escapeHtml(profile.dbTargetLabel)}</td>
-          <td>${profile.basicSelect.status === 'ok'
-            ? `<span style="color:${statusColor};font-weight:bold;">ok</span><br><small>${escapeHtml(profile.basicSelect.currentTimestamp ?? 'timestamp unavailable')}</small>`
-            : `<span style="color:${statusColor};font-weight:bold;">error</span><br><small>${escapeHtml(profile.basicSelect.error?.message ?? 'Unknown error')}</small>`}</td>
+          <td>${renderToolList(profile.tools)}</td>
+          <td>${renderBasicSelect(profile)}</td>
           <td>${renderModeSignals(profile.modeSignals)}</td>
         </tr>
       `).join('')
-    : '<tr><td colspan="5">No enabled profiles are configured.</td></tr>';
+    : '<tr><td colspan="7">No profiles are available.</td></tr>';
 
   return `<!doctype html>
 <html lang="en">
@@ -269,13 +461,15 @@ export function renderStatusPage(summary: ServiceHealthSummary): string {
     <h1>DB2 LUW MCP Status</h1>
     <p><span class="status">${escapeHtml(summary.status)}</span> &middot; Checked at ${escapeHtml(summary.checkedAt)}</p>
 
-    <h2>Enabled Profiles</h2>
+    <h2>Profiles</h2>
     <table>
       <thead>
         <tr>
           <th>Profile</th>
+          <th>State</th>
           <th>Mode</th>
           <th>DB target</th>
+          <th>Tools</th>
           <th>Basic select check</th>
           <th>Mode signals</th>
         </tr>

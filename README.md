@@ -40,7 +40,7 @@ Standalone internal MCP server for IBM DB2 LUW. Release 1 is HTTP-first, profile
 
 - `GET /healthz` returns JSON health details and runs `select current timestamp from sysibm.sysdummy1` for each enabled profile
 - `GET /readyz` returns JSON readiness details and runs the same per-profile basic select checks
-- `GET /status` returns a simple HTML page that shows service health, enabled profiles, file locations, and operator instructions
+- `GET /status` returns a simple HTML page that shows service health, all standard profiles, explicit tool lists, file locations, and operator instructions
 - `GET /mcp`, `POST /mcp`, and `DELETE /mcp` handle MCP Streamable HTTP traffic
 - `GET /`, `POST /`, and `DELETE /` are accepted as an MCP alias for simpler clients and bridge tools
 
@@ -64,7 +64,7 @@ The JSON health/readiness payloads include:
 - per-profile basic select result
 - conservative mode signals for `readonly`, `readonly_procedures`, and `full`
 
-The HTML status page at `/status` shows the same information in a simple operator-friendly layout.
+The HTML status page at `/status` shows the same information in a simple operator-friendly layout, including profiles that are currently not enabled in the active YAML.
 
 ## Configuration files
 
