@@ -22,6 +22,7 @@ function createConfig(enabledProfileIds: string[]): ResolvedConfig {
   });
 
   return {
+    configPath: '/test/config.yaml',
     server: {
       host: '127.0.0.1',
       port: 3000,

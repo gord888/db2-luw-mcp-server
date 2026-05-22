@@ -82,6 +82,7 @@ interface ConnectedTestServer {
 
 function createConfig(profile: ResolvedProfileConfig): ResolvedConfig {
   return {
+    configPath: '/test/config.yaml',
     server: {
       host: '127.0.0.1',
       port: 3000,

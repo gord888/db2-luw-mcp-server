@@ -20,13 +20,12 @@ import type { ResolvedConfig, ResolvedProfileConfig } from '../src/config/types.
 import { createHttpServer } from '../src/server/httpServer.js';
 
 class FakeDb2Client implements Db2Client {
-  public query<T = Record<string, unknown>>(_sql: string, _params: Db2Parameter[], _options: QueryOptions): Promise<QueryResult<T>> {
-    return Promise.resolve({
-      columns: [],
-      rows: [],
-      rowCount: 0,
-      warnings: []
-    } as QueryResult<T>);
+  public constructor(
+    private readonly onQuery: (sql: string, params: Db2Parameter[], options: QueryOptions) => Promise<QueryResult<Record<string, unknown>>>
+  ) {}
+
+  public query<T = Record<string, unknown>>(sql: string, params: Db2Parameter[], options: QueryOptions): Promise<QueryResult<T>> {
+    return this.onQuery(sql, params, options) as Promise<QueryResult<T>>;
   }
 
   public callProcedure(_schema: string, _name: string, _params: Db2Parameter[], _options: QueryOptions): Promise<ProcedureResult> {
@@ -62,8 +61,10 @@ class FakeDb2Client implements Db2Client {
 }
 
 class FakeDb2ClientFactory implements Db2ClientFactory {
-  public create(_profile: ResolvedProfileConfig): Db2Client {
-    return new FakeDb2Client();
+  public constructor(private readonly createClient: (profile: ResolvedProfileConfig) => Db2Client) {}
+
+  public create(profile: ResolvedProfileConfig): Db2Client {
+    return this.createClient(profile);
   }
 }
 
@@ -88,9 +89,11 @@ function createProfile(): ResolvedProfileConfig {
 
 function createConfig(profile: ResolvedProfileConfig): ResolvedConfig {
   return {
+    configPath: '/test/config.yaml',
     server: {
       host: '127.0.0.1',
       port: 0,
+      publicBaseUrl: 'http://db2-mcp.internal:3000',
       readinessAuthRequired: true
     },
     limits: {
@@ -107,12 +110,19 @@ function createConfig(profile: ResolvedProfileConfig): ResolvedConfig {
   };
 }
 
-async function startTestServer(): Promise<{ url: string; close: () => Promise<void> }> {
-  const profile = createProfile();
+async function startTestServer(
+  profile: ResolvedProfileConfig = createProfile(),
+  factory: Db2ClientFactory = new FakeDb2ClientFactory(() => new FakeDb2Client(async () => ({
+    columns: ['CURRENT_TIMESTAMP'],
+    rows: [{ CURRENT_TIMESTAMP: '2026-05-22T10:00:00.000000' }],
+    rowCount: 1,
+    warnings: []
+  })))
+): Promise<{ url: string; close: () => Promise<void> }> {
   const server = createHttpServer({
     config: createConfig(profile),
     descriptorCatalog: DescriptorCatalog.empty(),
-    db2ClientFactory: new FakeDb2ClientFactory(),
+    db2ClientFactory: factory,
     auditLogger: new MemoryAuditLogger()
   });
 
@@ -205,5 +215,86 @@ describe('HTTP MCP server compatibility', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toContain('text/event-stream');
     expect(await response.text()).toContain('"serverInfo":{"name":"db2-luw-mcp-server"');
+  });
+
+  it('returns public readiness details based on a real basic select check', async () => {
+    const server = await startTestServer(
+      createProfile(),
+      new FakeDb2ClientFactory(() => new FakeDb2Client(async (sql) => {
+        expect(sql).toContain('SELECT CURRENT TIMESTAMP');
+        expect(sql).toContain('SYSIBM.SYSDUMMY1');
+
+        return {
+          columns: ['CURRENT_TIMESTAMP'],
+          rows: [{ CURRENT_TIMESTAMP: '2026-05-22-10.11.12.123456' }],
+          rowCount: 1,
+          warnings: []
+        };
+      }))
+    );
+    openServers.push(server);
+
+    const response = await fetch(`${server.url}/readyz`);
+    const payload = await response.json() as Record<string, unknown>;
+    const profiles = payload.enabledProfiles as Array<Record<string, unknown>>;
+    const profile = profiles[0];
+    const basicSelect = profile?.basicSelect as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(payload.status).toBe('ready');
+    expect(profile?.id).toBe('readonly');
+    expect(basicSelect.status).toBe('ok');
+    expect(basicSelect.currentTimestamp).toBe('2026-05-22-10.11.12.123456');
+  });
+
+  it('returns a public status page with file locations and profile details', async () => {
+    const profile = {
+      ...createProfile(),
+      mode: 'readonly_procedures' as const,
+      tools: ['run_query', 'call_procedure'] as const,
+      procedureAllowlist: [{ schema: 'APP', name: 'SAFE_REPORT_PROC' }]
+    };
+    const server = await startTestServer(
+      profile,
+      new FakeDb2ClientFactory(() => new FakeDb2Client(async () => ({
+        columns: ['CURRENT_TIMESTAMP'],
+        rows: [{ CURRENT_TIMESTAMP: '2026-05-22-10.11.12.123456' }],
+        rowCount: 1,
+        warnings: []
+      })))
+    );
+    openServers.push(server);
+
+    const response = await fetch(`${server.url}/status`);
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/html');
+    expect(body).toContain('DB2 LUW MCP Status');
+    expect(body).toContain('/etc/db2-luw-mcp-server.env');
+    expect(body).toContain('/etc/systemd/system/db2-luw-mcp-server.service');
+    expect(body).toContain('readonly_procedures');
+    expect(body).toContain('SAFE_REPORT_PROC');
+  });
+
+  it('marks health as degraded when the DB select check fails', async () => {
+    const server = await startTestServer(
+      createProfile(),
+      new FakeDb2ClientFactory(() => new FakeDb2Client(async () => {
+        throw new Error('Database unavailable');
+      }))
+    );
+    openServers.push(server);
+
+    const response = await fetch(`${server.url}/healthz`);
+    const payload = await response.json() as Record<string, unknown>;
+    const profiles = payload.enabledProfiles as Array<Record<string, unknown>>;
+    const basicSelect = profiles[0]?.basicSelect as Record<string, unknown>;
+    const error = basicSelect.error as Record<string, unknown>;
+
+    expect(response.status).toBe(503);
+    expect(payload.status).toBe('degraded');
+    expect(basicSelect.status).toBe('error');
+    expect(error.message).toContain('Database unavailable');
   });
 });

@@ -101,6 +101,7 @@ export interface ResolvedProfileConfig {
 }
 
 export interface ResolvedConfig {
+  configPath: string;
   server: {
     host: string;
     port: number;

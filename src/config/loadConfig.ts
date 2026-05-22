@@ -89,6 +89,7 @@ export async function loadConfig(configPath: string, options: LoadConfigOptions 
   }
 
   return {
+    configPath: absolutePath,
     server: {
       host: rawConfig.server.host,
       port: rawConfig.server.port,

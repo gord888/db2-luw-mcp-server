@@ -6,7 +6,7 @@ Standalone internal MCP server for IBM DB2 LUW. Release 1 is HTTP-first, profile
 
 - Streamable HTTP MCP endpoint at `/mcp`
 - Compatibility alias at `/` for simpler MCP HTTP clients
-- `GET /healthz` and `GET /readyz`
+- Public `GET /healthz`, `GET /readyz`, and `GET /status`
 - API-key-to-profile auth with per-profile DB credentials
 - Read-only metadata/query tools plus allowlisted stored procedure execution
 - Optional stdio entrypoint for local `npx` / linked-command use
@@ -38,10 +38,33 @@ Standalone internal MCP server for IBM DB2 LUW. Release 1 is HTTP-first, profile
 
 ## HTTP endpoints
 
-- `GET /healthz` returns process health
-- `GET /readyz` validates DB connectivity for enabled profiles and requires a valid bearer token when `readinessAuthRequired: true`
+- `GET /healthz` returns JSON health details and runs `select current timestamp from sysibm.sysdummy1` for each enabled profile
+- `GET /readyz` returns JSON readiness details and runs the same per-profile basic select checks
+- `GET /status` returns a simple HTML page that shows service health, enabled profiles, file locations, and operator instructions
 - `GET /mcp`, `POST /mcp`, and `DELETE /mcp` handle MCP Streamable HTTP traffic
 - `GET /`, `POST /`, and `DELETE /` are accepted as an MCP alias for simpler clients and bridge tools
+
+`/healthz`, `/readyz`, and `/status` are public and are intended for operators and deployment checks.
+
+## Status and health behavior
+
+The service uses a real DB2 select to validate each enabled profile:
+
+```sql
+select current timestamp from sysibm.sysdummy1
+```
+
+The JSON health/readiness payloads include:
+
+- overall status
+- check timestamp
+- active config path
+- descriptor file locations
+- one entry per enabled profile
+- per-profile basic select result
+- conservative mode signals for `readonly`, `readonly_procedures`, and `full`
+
+The HTML status page at `/status` shows the same information in a simple operator-friendly layout.
 
 ## Configuration files
 
@@ -222,12 +245,19 @@ systemctl restart db2-luw-mcp-server
 curl http://127.0.0.1:3000/healthz
 ```
 
+6. Open the status page in a browser if needed:
+
+```text
+http://<server>:3000/status
+```
+
 ### Recommended deployment validation
 
 After deploying any fix or configuration change:
 
 1. Check `/healthz`
-2. Make a real MCP query call such as:
+2. Optionally review `/status` for enabled profiles, file locations, and mode signals
+3. Make a real MCP query call such as:
 
 ```sql
 select * from tmwin.tlorder limit 1

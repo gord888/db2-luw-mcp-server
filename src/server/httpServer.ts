@@ -8,6 +8,7 @@ import type { DescriptorCatalog } from '../descriptors/descriptorCatalog.js';
 import { AppError } from '../errors/AppError.js';
 import { toAppError, toErrorPayload } from '../errors/errorMapper.js';
 import { authenticateRequest } from './auth.js';
+import { collectServiceHealthSummary, renderStatusPage } from './healthStatus.js';
 import { createMcpServer } from './mcpServer.js';
 import { createRequestContext } from './requestContext.js';
 
@@ -87,31 +88,39 @@ function writeJson(res: ServerResponse, statusCode: number, body: unknown): void
   res.end(JSON.stringify(body));
 }
 
+function writeHtml(res: ServerResponse, statusCode: number, body: string): void {
+  res.statusCode = statusCode;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.end(body);
+}
+
 async function handleReadiness(
-  req: IncomingMessage,
   res: ServerResponse,
   dependencies: HttpServerDependencies
 ): Promise<void> {
-  if (dependencies.config.server.readinessAuthRequired) {
-    authenticateRequest(req.headers, dependencies.config);
-  }
+  const summary = await collectServiceHealthSummary(dependencies.config, dependencies.db2ClientFactory);
 
-  const enabledProfiles = Object.values(dependencies.config.profiles).filter((profile) => profile.enabled);
-
-  for (const profile of enabledProfiles) {
-    const client = dependencies.db2ClientFactory.create(profile);
-
-    try {
-      await client.testConnection();
-    } finally {
-      await client.close();
-    }
-  }
-
-  writeJson(res, 200, {
-    status: 'ready',
-    profiles: enabledProfiles.map((profile) => profile.id)
+  writeJson(res, summary.status === 'ok' ? 200 : 503, {
+    ...summary,
+    status: summary.status === 'ok' ? 'ready' : 'degraded'
   });
+}
+
+async function handleHealth(
+  res: ServerResponse,
+  dependencies: HttpServerDependencies
+): Promise<void> {
+  const summary = await collectServiceHealthSummary(dependencies.config, dependencies.db2ClientFactory);
+
+  writeJson(res, summary.status === 'ok' ? 200 : 503, summary);
+}
+
+async function handleStatusPage(
+  res: ServerResponse,
+  dependencies: HttpServerDependencies
+): Promise<void> {
+  const summary = await collectServiceHealthSummary(dependencies.config, dependencies.db2ClientFactory);
+  writeHtml(res, 200, renderStatusPage(summary));
 }
 
 async function handleMcp(
@@ -155,14 +164,17 @@ export function createHttpServer(dependencies: HttpServerDependencies): Server {
       const isMcpRoute = requestPath === '/mcp' || requestPath === '/';
 
       if ((req.method ?? 'GET') === 'GET' && req.url === '/healthz') {
-        writeJson(res, 200, {
-          status: 'ok'
-        });
+        await handleHealth(res, dependencies);
         return;
       }
 
       if ((req.method ?? 'GET') === 'GET' && req.url === '/readyz') {
-        await handleReadiness(req, res, dependencies);
+        await handleReadiness(res, dependencies);
+        return;
+      }
+
+      if ((req.method ?? 'GET') === 'GET' && req.url === '/status') {
+        await handleStatusPage(res, dependencies);
         return;
       }
 
