@@ -5,17 +5,17 @@ import { AppError } from '../src/errors/AppError.js';
 
 const entries = [
   {
-    schema: 'APP',
-    name: 'SAFE_REPORT_PROC'
+    schema: 'SYSPROC',
+    name: 'GET_DBSIZE_INFO'
   }
 ];
 
 describe('procedure allowlist', () => {
   it('matches entries case-insensitively', () => {
-    expect(isProcedureAllowlisted(entries, 'app', 'safe_report_proc')).toBe(true);
+    expect(isProcedureAllowlisted(entries, 'sysproc', 'get_dbsize_info')).toBe(true);
   });
 
   it('rejects procedures not on the allowlist', () => {
-    expect(() => assertProcedureAllowlisted(entries, 'APP', 'DANGEROUS_PROC')).toThrowError(AppError);
+    expect(() => assertProcedureAllowlisted(entries, 'SYSPROC', 'DANGEROUS_PROC')).toThrowError(AppError);
   });
 });

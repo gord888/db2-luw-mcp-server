@@ -41,7 +41,7 @@ Standalone internal MCP server for IBM DB2 LUW. Release 1 is HTTP-first, profile
 
 - `GET /healthz` returns JSON health details and runs `select current timestamp from sysibm.sysdummy1` for each enabled profile
 - `GET /readyz` returns JSON readiness details and runs the same per-profile basic select checks
-- `GET /status` returns a simple HTML page that shows service health, all standard profiles, explicit tool lists, file locations, and operator instructions
+- `GET /status` returns a simple HTML page that shows service health, all standard profiles, explicit tool lists, per-mode checks, file locations, and operator instructions
 - `GET /mcp`, `POST /mcp`, and `DELETE /mcp` handle MCP Streamable HTTP traffic
 - `GET /`, `POST /`, and `DELETE /` are accepted as an MCP alias for simpler clients and bridge tools
 
@@ -64,10 +64,9 @@ The JSON health/readiness payloads include:
 - one entry per enabled profile
 - per-profile basic select result
 - conservative mode signals for `readonly`, `readonly_procedures`, and `full`
-- a safe stored-procedure probe for `readonly_procedures` using `CALL SYSPROC.GET_DBSIZE_INFO(?, ?, ?, -1)` when that profile is enabled
-- a safe catalog-based routine-create privilege probe for `full`, plus a suggested manual scratch-schema procedure definition using hardcoded value `4242`
+- on `/status`, `readonly` shows the select probe, `readonly_procedures` shows the select probe plus `CALL SYSPROC.GET_DBSIZE_INFO(?, ?, ?, -1)`, and `full` shows those same checks plus `CREATE OR REPLACE PROCEDURE DB2MCP_STATUS_CHECK()` with hardcoded value `4242`
 
-The HTML status page at `/status` shows the same information in a simple operator-friendly layout, including profiles that are currently not enabled in the active YAML.
+The HTML status page at `/status` shows the same information in a simple operator-friendly layout, including profiles that are currently not enabled in the active YAML. It runs deeper per-mode checks than `/healthz` and `/readyz`.
 
 ## Configuration files
 
@@ -144,7 +143,7 @@ profiles:
     enabled: false
 ```
 
-The `readonly_procedures` profile already includes readonly query tools plus `list_procedures`, `describe_procedure`, and `call_procedure`. Procedure execution is still limited by the YAML `procedureAllowlist`.
+The `readonly_procedures` profile already includes readonly query tools plus `list_procedures`, `describe_procedure`, and `call_procedure`. The default YAML `procedureAllowlist` is intentionally limited to `SYSPROC.GET_DBSIZE_INFO`.
 
 #### Full mode
 
@@ -166,7 +165,7 @@ profiles:
     enabled: true
 ```
 
-**Note:** the `full` profile is included as a deployment/configuration stub, but Release 1 does not yet expose any full-mode tools beyond what is already implemented for readonly/readonly_procedures.
+**Note:** the `full` profile currently exposes the same implemented query and procedure tools as `readonly_procedures`, and the status page adds a deeper create-or-replace procedure probe for permission validation.
 
 #### All profiles enabled
 

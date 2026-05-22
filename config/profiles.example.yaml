@@ -63,10 +63,8 @@ profiles:
       - "describe_procedure"
       - "call_procedure"
     procedureAllowlist:
-      - schema: "APP"
-        name: "SAFE_REPORT_PROC"
-      - schema: "OPS"
-        name: "SAFE_STATUS_PROC"
+      - schema: "SYSPROC"
+        name: "GET_DBSIZE_INFO"
 
   full:
     enabled: false
@@ -76,4 +74,19 @@ profiles:
     db:
       connectionStringEnv: "DB2_MCP_DB_FULL"
       targetLabel: "db2-luw-full"
-    tools: []
+    tools:
+      - "list_schemas"
+      - "list_tables"
+      - "describe_table"
+      - "describe_index"
+      - "get_relationships"
+      - "get_table_context"
+      - "search_business_terms"
+      - "list_join_paths"
+      - "search_objects"
+      - "run_query"
+      - "preview_table"
+      - "explain_query"
+      - "list_procedures"
+      - "describe_procedure"
+      - "call_procedure"

@@ -119,7 +119,9 @@ async function handleStatusPage(
   res: ServerResponse,
   dependencies: HttpServerDependencies
 ): Promise<void> {
-  const summary = await collectServiceHealthSummary(dependencies.config, dependencies.db2ClientFactory);
+  const summary = await collectServiceHealthSummary(dependencies.config, dependencies.db2ClientFactory, {
+    includeDetailedChecks: true
+  });
   writeHtml(res, 200, renderStatusPage(summary));
 }
 

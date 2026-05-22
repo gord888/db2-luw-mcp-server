@@ -281,11 +281,13 @@ describe('HTTP MCP server compatibility', () => {
     expect(body).toContain('run_query');
     expect(body).toContain('list_procedures');
     expect(body).toContain('call_procedure');
+    expect(body).toContain('SYSPROC.GET_DBSIZE_INFO');
     expect(body).toContain('CALL SYSPROC.GET_DBSIZE_INFO(?, ?, ?, -1)');
-    expect(body).toContain('HEALTHCHECK_VALUE INTEGER DEFAULT 4242');
+    expect(body).toContain('CREATE OR REPLACE PROCEDURE DB2MCP_STATUS_CHECK()');
+    expect(body).toContain('Profile is not defined in the active config and is treated as disabled.');
   });
 
-  it('shows safe readonly_procedures and full-mode verification signals on the status page', async () => {
+  it('shows actual readonly_procedures and full-mode checks on the status page', async () => {
     const readonlyProceduresProfile: ResolvedProfileConfig = {
       ...createProfile(),
       id: 'readonly_procedures',
@@ -300,7 +302,7 @@ describe('HTTP MCP server compatibility', () => {
         targetLabel: 'readonly-procedures-db'
       },
       tools: ['run_query', 'call_procedure'],
-      procedureAllowlist: [{ schema: 'APP', name: 'SAFE_REPORT_PROC' }]
+      procedureAllowlist: [{ schema: 'SYSPROC', name: 'GET_DBSIZE_INFO' }]
     };
     const fullProfile: ResolvedProfileConfig = {
       ...createProfile(),
@@ -315,7 +317,7 @@ describe('HTTP MCP server compatibility', () => {
         connectionString: 'DATABASE=SAMPLE;',
         targetLabel: 'full-db'
       },
-      tools: [],
+      tools: ['run_query', 'call_procedure'],
       procedureAllowlist: []
     };
     const server = await startTestServer(
@@ -344,11 +346,11 @@ describe('HTTP MCP server compatibility', () => {
         }
 
         return new FakeDb2Client(async (_sql, _params, options) => {
-          if (options.label?.includes('routine create privilege check')) {
+          if (options.label?.includes('create or replace db2mcp_status_check')) {
             return {
-              columns: ['AUTH_ID', 'CURRENT_SCHEMA', 'CAN_CREATE_ROUTINE'],
-              rows: [{ AUTH_ID: 'DB2USER', CURRENT_SCHEMA: 'APP', CAN_CREATE_ROUTINE: 1 }],
-              rowCount: 1,
+              columns: [],
+              rows: [],
+              rowCount: 0,
               warnings: []
             };
           }
@@ -368,9 +370,12 @@ describe('HTTP MCP server compatibility', () => {
     const body = await response.text();
 
     expect(response.status).toBe(200);
-    expect(body).toContain('CALL SYSPROC.GET_DBSIZE_INFO(?, ?, ?, -1) completed successfully');
-    expect(body).toContain('Catalog privileges indicate DB2USER can likely create routines in schema APP');
-    expect(body).toContain('HEALTHCHECK_VALUE INTEGER DEFAULT 4242');
+    expect(body).toContain('Select probe');
+    expect(body).toContain('Stored procedure probe');
+    expect(body).toContain('Create or replace procedure probe');
+    expect(body).toContain('Stored procedure call succeeded.');
+    expect(body).toContain('Create or replace procedure succeeded.');
+    expect(body).toContain('CREATE OR REPLACE PROCEDURE DB2MCP_STATUS_CHECK()');
   });
 
   it('marks health as degraded when the DB select check fails', async () => {
