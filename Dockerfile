@@ -6,12 +6,11 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-COPY package.json package-lock.json tsconfig.json vitest.config.ts ./
+COPY package.json package-lock.json tsconfig.json ./
 RUN npm ci
 
 COPY config ./config
 COPY src ./src
-COPY tests ./tests
 COPY README.md ./
 RUN npm run build \
   && npm prune --omit=dev
