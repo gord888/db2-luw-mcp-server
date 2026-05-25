@@ -7,13 +7,12 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json tsconfig.json ./
+COPY src ./src
 RUN npm ci
 
 COPY config ./config
-COPY src ./src
 COPY README.md ./
-RUN npm run build \
-  && npm prune --omit=dev
+RUN npm prune --omit=dev
 
 FROM node:20-bookworm-slim AS runtime
 
