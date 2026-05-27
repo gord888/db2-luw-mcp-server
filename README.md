@@ -72,7 +72,9 @@ The repo includes `.github/workflows/build-container.yml` that mirrors the Azure
 
 1. `build` runs `npm ci`, `npm run build`, and `npm run test`
 2. `package-container` builds the OCI image and publishes a compressed image artifact
-3. `push-container` loads that artifact and pushes `sha` and `latest` tags on `main`
+3. `push-container` loads that artifact and pushes `<build-version>` and `latest` tags on `main`
+
+The build version is generated once per run using `yyyyMMddHHmmss` format and reused across package/push jobs.
 
 For public personal repos using GHCR, no separate registry username/password secrets are required. The workflow uses `GITHUB_TOKEN` and sets:
 
