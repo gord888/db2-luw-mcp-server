@@ -82,6 +82,8 @@ permissions:
   packages: write
 ```
 
+If a run fails with `denied: permission_denied: write_package`, add a repository secret named `GHCR_PAT` (classic PAT with `write:packages`) and rerun. The workflow automatically prefers `GHCR_PAT` when present and falls back to `GITHUB_TOKEN`.
+
 Optional repository variables:
 
 | Variable | Purpose | Required |
