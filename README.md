@@ -12,7 +12,7 @@ Standalone internal MCP server for IBM DB2 LUW. Release 1 is HTTP-first, profile
 - Full-mode deploy/drop tools for stored procedures, functions, and views
 - Full-mode generic `run_ddl` support for broader schema-definition work
 - Optional stdio entrypoint for local `npx` / linked-command use
-- Linux container packaging and Azure DevOps pipeline assets
+- Linux container packaging plus Azure DevOps and GitHub Actions pipeline assets
 
 ## Repository contents
 
@@ -65,6 +65,29 @@ Populate that variable group with:
 For GHCR, the token is best stored as a **secret variable** in that variable group. If you want stronger secret management, back the variable group with **Azure Key Vault** and keep the pipeline YAML unchanged.
 
 The pipeline does not include Proxmox deployment steps yet.
+
+## GitHub Actions workflow
+
+The repo includes `.github/workflows/build-container.yml` that mirrors the Azure pipeline stages:
+
+1. `build` runs `npm ci`, `npm run build`, and `npm run test`
+2. `package-container` builds the OCI image and publishes a compressed image artifact
+3. `push-container` loads that artifact and pushes `sha` and `latest` tags on `main`
+
+For public personal repos using GHCR, no separate registry username/password secrets are required. The workflow uses `GITHUB_TOKEN` and sets:
+
+```yaml
+permissions:
+  contents: read
+  packages: write
+```
+
+Optional repository variables:
+
+| Variable | Purpose | Required |
+| --- | --- | --- |
+| `CONTAINER_REGISTRY_LOGIN_SERVER` | Registry login server override (default `ghcr.io`) | No |
+| `CONTAINER_IMAGE_REPOSITORY` | Image repository override (default `${{ github.repository }}` lower-cased) | No |
 
 ## HTTP endpoints
 
