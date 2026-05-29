@@ -2,13 +2,13 @@
 
 Standalone internal MCP server for IBM DB2 LUW. Release 1 is HTTP-first, profile-driven, and uses direct `ibm_db` connectivity with guarded read-only query support plus allowlisted stored procedures.
 
-# WARNINGS
+## WARNINGS
 
 :warning: This is still in ALPHA! I am running this locally on a Proxmox server using an OCI deployment and leveraing Gihub Copilot CLI to test.  Expect more updates as I find bugs or need new features.  Feel free to add features and bug fixes via PRs.
 
 :warning: This was purely vibe coded.  
 
-# Motivation
+## Motivation
 I wanted them to leverage AI to accelerate DB2 DevOps and ITOps. There are a few other DB2 LUW MCP servers out there, however they weren't fully baked or missing core features like DDL capabilities.  
 - read only mode - safe for power users to allow their AI agents to query for data
 - read only with sproc - for more advanced power users and IT controlled AI agents.  Good for ITOps that need to diagnose and resolve problems.
