@@ -22,7 +22,7 @@ ENV NODE_ENV=production
 ENV DB2_MCP_CONFIG_PATH=/app/config/profiles.example.yaml
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl \
+  && apt-get install -y --no-install-recommends ca-certificates curl libxml2 \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/package.json /app/package-lock.json ./
