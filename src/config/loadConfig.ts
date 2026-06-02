@@ -40,10 +40,41 @@ function parsePositiveInt(name: string, raw: string): number {
   return parseInt(raw, 10);
 }
 
+function buildConnectionString(): string {
+  const database = process.env.DB2_MCP_CONNECTION_STRING_DATABASE;
+  const hostname = process.env.DB2_MCP_CONNECTION_STRING_HOSTNAME;
+  const uid = process.env.DB2_MCP_CONNECTION_STRING_UID;
+  const pwd = process.env.DB2_MCP_CONNECTION_STRING_PWD;
+
+  const anyIndividual = database || hostname || uid || pwd;
+
+  if (anyIndividual) {
+    if (!database) {
+      throw new AppError('CONFIG_INVALID', 'DB2_MCP_CONNECTION_STRING_DATABASE is required when using individual connection env vars.', 500);
+    }
+    if (!hostname) {
+      throw new AppError('CONFIG_INVALID', 'DB2_MCP_CONNECTION_STRING_HOSTNAME is required when using individual connection env vars.', 500);
+    }
+    if (!uid) {
+      throw new AppError('CONFIG_INVALID', 'DB2_MCP_CONNECTION_STRING_UID is required when using individual connection env vars.', 500);
+    }
+    if (!pwd) {
+      throw new AppError('CONFIG_INVALID', 'DB2_MCP_CONNECTION_STRING_PWD is required when using individual connection env vars.', 500);
+    }
+
+    const port = optionalEnv('DB2_MCP_CONNECTION_STRING_PORT', '50000');
+    const protocol = optionalEnv('DB2_MCP_CONNECTION_STRING_PROTOCOL', 'TCPIP');
+
+    return `DATABASE=${database};HOSTNAME=${hostname};PORT=${port};PROTOCOL=${protocol};UID=${uid};PWD=${pwd};`;
+  }
+
+  return requiredEnv('DB2_MCP_CONNECTION_STRING');
+}
+
 export function loadConfig(): ResolvedConfig {
   const mode = parseMode(requiredEnv('DB2_MCP_MODE'));
   const apiKey = requiredEnv('DB2_MCP_API_KEY');
-  const connectionString = requiredEnv('DB2_MCP_CONNECTION_STRING');
+  const connectionString = buildConnectionString();
 
   const descriptorFilesRaw = optionalEnv('DB2_MCP_DESCRIPTOR_FILES', '');
   const descriptorFiles = descriptorFilesRaw

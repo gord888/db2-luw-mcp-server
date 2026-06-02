@@ -95,6 +95,13 @@ write_env_file() {
   upsert_env "DB2_MCP_MODE" "${DB2_MCP_MODE:-readonly}"
   ensure_env_if_missing "DB2_MCP_API_KEY" "replace-with-your-api-key"
   ensure_env_if_missing "DB2_MCP_CONNECTION_STRING" "DATABASE=SAMPLE;HOSTNAME=db2.internal;PORT=50000;PROTOCOL=TCPIP;UID=db2_mcp;PWD=change-me;"
+  # Individual connection vars (preferred — avoids Proxmox UI semicolon/equals bugs)
+  ensure_env_if_missing "DB2_MCP_CONNECTION_STRING_DATABASE" "SAMPLE"
+  ensure_env_if_missing "DB2_MCP_CONNECTION_STRING_HOSTNAME" "db2.internal"
+  ensure_env_if_missing "DB2_MCP_CONNECTION_STRING_PORT" "50000"
+  ensure_env_if_missing "DB2_MCP_CONNECTION_STRING_PROTOCOL" "TCPIP"
+  ensure_env_if_missing "DB2_MCP_CONNECTION_STRING_UID" "db2_mcp"
+  ensure_env_if_missing "DB2_MCP_CONNECTION_STRING_PWD" "change-me"
   ensure_env_if_missing "LOG_LEVEL" "info"
 }
 

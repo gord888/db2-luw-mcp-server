@@ -22,7 +22,17 @@ I wanted to leverage AI to accelerate DB2 DevOps and ITOps. There are a few othe
 # Required
 export DB2_MCP_MODE=readonly
 export DB2_MCP_API_KEY=sk-your-api-key
+
+# Option A: Single connection string
 export DB2_MCP_CONNECTION_STRING="DATABASE=SAMPLE;HOSTNAME=db2.internal;PORT=50000;PROTOCOL=TCPIP;UID=mcp_user;PWD=secret;"
+
+# Option B: Individual connection vars (recommended for Proxmox — avoids semicolon/equals bugs in UIs)
+export DB2_MCP_CONNECTION_STRING_DATABASE=SAMPLE
+export DB2_MCP_CONNECTION_STRING_HOSTNAME=db2.internal
+export DB2_MCP_CONNECTION_STRING_PORT=50000
+export DB2_MCP_CONNECTION_STRING_PROTOCOL=TCPIP
+export DB2_MCP_CONNECTION_STRING_UID=mcp_user
+export DB2_MCP_CONNECTION_STRING_PWD=secret
 
 # Start HTTP server
 npm start
@@ -39,7 +49,15 @@ One container, one mode. All tools for that mode are derived automatically. No Y
 |---|---|---|---|
 | `DB2_MCP_MODE` | **Yes** | — | `readonly`, `readonly_procedures`, or `full` |
 | `DB2_MCP_API_KEY` | **Yes** | — | Bearer token for MCP requests |
-| `DB2_MCP_CONNECTION_STRING` | **Yes** | — | DB2 connection string |
+| `DB2_MCP_CONNECTION_STRING` | **Yes**¹ | — | DB2 connection string |
+| `DB2_MCP_CONNECTION_STRING_DATABASE` | **Yes**¹ | — | DB2 database name |
+| `DB2_MCP_CONNECTION_STRING_HOSTNAME` | **Yes**¹ | — | DB2 hostname or IP |
+| `DB2_MCP_CONNECTION_STRING_UID` | **Yes**¹ | — | DB2 username |
+| `DB2_MCP_CONNECTION_STRING_PWD` | **Yes**¹ | — | DB2 password |
+| `DB2_MCP_CONNECTION_STRING_PORT` | No | `50000` | DB2 port |
+| `DB2_MCP_CONNECTION_STRING_PROTOCOL` | No | `TCPIP` | DB2 protocol |
+
+¹ Use EITHER `DB2_MCP_CONNECTION_STRING` OR the individual vars. Individual vars take precedence and are recommended for Proxmox deployments to avoid semicolon/equals issues in the Proxmox UI.
 | `DB2_MCP_HOST` | No | `0.0.0.0` | Listen address |
 | `DB2_MCP_PORT` | No | `3000` | Listen port |
 | `DB2_MCP_PUBLIC_BASE_URL` | No | — | Public URL for SSE endpoint |
@@ -201,7 +219,16 @@ curl http://127.0.0.1:3000/healthz
 ```powershell
 $env:DB2_MCP_MODE = 'readonly'
 $env:DB2_MCP_API_KEY = 'my-api-key'
+
+# Option A: single string
 $env:DB2_MCP_CONNECTION_STRING = 'DATABASE=SAMPLE;HOSTNAME=db2.internal;PORT=50000;PROTOCOL=TCPIP;UID=db2_mcp;PWD=secret;'
+
+# Option B: individual vars
+$env:DB2_MCP_CONNECTION_STRING_DATABASE = 'SAMPLE'
+$env:DB2_MCP_CONNECTION_STRING_HOSTNAME = 'db2.internal'
+$env:DB2_MCP_CONNECTION_STRING_UID = 'db2_mcp'
+$env:DB2_MCP_CONNECTION_STRING_PWD = 'secret'
+
 npm run dev
 ```
 
@@ -252,7 +279,7 @@ Or use the helper script:
 }
 ```
 
-### Local linked-command (stdio)
+### Local linked-command (stdio) — individual vars
 
 ```json
 {
@@ -262,14 +289,17 @@ Or use the helper script:
       "env": {
         "DB2_MCP_MODE": "readonly",
         "DB2_MCP_API_KEY": "readonly-key",
-        "DB2_MCP_CONNECTION_STRING": "DATABASE=SAMPLE;HOSTNAME=db2.internal;PORT=50000;PROTOCOL=TCPIP;UID=db2_mcp;PWD=secret;"
+        "DB2_MCP_CONNECTION_STRING_DATABASE": "SAMPLE",
+        "DB2_MCP_CONNECTION_STRING_HOSTNAME": "db2.internal",
+        "DB2_MCP_CONNECTION_STRING_UID": "db2_mcp",
+        "DB2_MCP_CONNECTION_STRING_PWD": "secret"
       }
     }
   }
 }
 ```
 
-### Published package / npx (stdio)
+### Published package / npx (stdio) — individual vars
 
 ```json
 {
@@ -280,7 +310,10 @@ Or use the helper script:
       "env": {
         "DB2_MCP_MODE": "readonly",
         "DB2_MCP_API_KEY": "readonly-key",
-        "DB2_MCP_CONNECTION_STRING": "DATABASE=SAMPLE;HOSTNAME=db2.internal;PORT=50000;PROTOCOL=TCPIP;UID=db2_mcp;PWD=secret;"
+        "DB2_MCP_CONNECTION_STRING_DATABASE": "SAMPLE",
+        "DB2_MCP_CONNECTION_STRING_HOSTNAME": "db2.internal",
+        "DB2_MCP_CONNECTION_STRING_UID": "db2_mcp",
+        "DB2_MCP_CONNECTION_STRING_PWD": "secret"
       }
     }
   }
@@ -290,10 +323,21 @@ Or use the helper script:
 ## Docker
 
 ```bash
+# Option A: Single connection string
 docker run -d -p 3000:3000 \
   -e DB2_MCP_MODE=readonly \
   -e DB2_MCP_API_KEY=sk-abc123 \
   -e DB2_MCP_CONNECTION_STRING="DATABASE=SAMPLE;HOSTNAME=db2.internal;PORT=50000;PROTOCOL=TCPIP;UID=mcp;PWD=secret;" \
+  ghcr.io/gord888/db2-luw-mcp-server:latest
+
+# Option B: Individual connection vars
+docker run -d -p 3000:3000 \
+  -e DB2_MCP_MODE=readonly \
+  -e DB2_MCP_API_KEY=sk-abc123 \
+  -e DB2_MCP_CONNECTION_STRING_DATABASE=SAMPLE \
+  -e DB2_MCP_CONNECTION_STRING_HOSTNAME=db2.internal \
+  -e DB2_MCP_CONNECTION_STRING_UID=mcp \
+  -e DB2_MCP_CONNECTION_STRING_PWD=secret \
   ghcr.io/gord888/db2-luw-mcp-server:latest
 ```
 

@@ -7,6 +7,12 @@ const trackedEnv = [
   'DB2_MCP_MODE',
   'DB2_MCP_API_KEY',
   'DB2_MCP_CONNECTION_STRING',
+  'DB2_MCP_CONNECTION_STRING_DATABASE',
+  'DB2_MCP_CONNECTION_STRING_HOSTNAME',
+  'DB2_MCP_CONNECTION_STRING_PORT',
+  'DB2_MCP_CONNECTION_STRING_PROTOCOL',
+  'DB2_MCP_CONNECTION_STRING_UID',
+  'DB2_MCP_CONNECTION_STRING_PWD',
   'DB2_MCP_CALLER_LABEL',
   'DB2_MCP_DB_LABEL',
   'DB2_MCP_HOST',
@@ -143,6 +149,75 @@ describe('loadConfig', () => {
   });
 
   it('throws when required env vars are missing', () => {
+    expect(() => loadConfig()).toThrowError(AppError);
+  });
+
+  it('builds connection string from individual env vars with defaults', () => {
+    process.env.DB2_MCP_MODE = 'readonly';
+    process.env.DB2_MCP_API_KEY = 'readonly-key';
+    process.env.DB2_MCP_CONNECTION_STRING_DATABASE = 'SAMPLE';
+    process.env.DB2_MCP_CONNECTION_STRING_HOSTNAME = 'db2.internal';
+    process.env.DB2_MCP_CONNECTION_STRING_UID = 'db2_mcp';
+    process.env.DB2_MCP_CONNECTION_STRING_PWD = 'secret';
+
+    const config = loadConfig();
+
+    expect(config.connectionString).toBe(
+      'DATABASE=SAMPLE;HOSTNAME=db2.internal;PORT=50000;PROTOCOL=TCPIP;UID=db2_mcp;PWD=secret;'
+    );
+  });
+
+  it('uses individual vars with custom port and protocol', () => {
+    process.env.DB2_MCP_MODE = 'readonly';
+    process.env.DB2_MCP_API_KEY = 'readonly-key';
+    process.env.DB2_MCP_CONNECTION_STRING_DATABASE = 'PRODDB';
+    process.env.DB2_MCP_CONNECTION_STRING_HOSTNAME = 'db2.prod.internal';
+    process.env.DB2_MCP_CONNECTION_STRING_PORT = '50001';
+    process.env.DB2_MCP_CONNECTION_STRING_PROTOCOL = 'TCP';
+    process.env.DB2_MCP_CONNECTION_STRING_UID = 'admin';
+    process.env.DB2_MCP_CONNECTION_STRING_PWD = 'admin-secret';
+
+    const config = loadConfig();
+
+    expect(config.connectionString).toBe(
+      'DATABASE=PRODDB;HOSTNAME=db2.prod.internal;PORT=50001;PROTOCOL=TCP;UID=admin;PWD=admin-secret;'
+    );
+  });
+
+  it('falls back to DB2_MCP_CONNECTION_STRING when individual vars not set', () => {
+    process.env.DB2_MCP_MODE = 'readonly';
+    process.env.DB2_MCP_API_KEY = 'readonly-key';
+    process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=LEGACY;HOSTNAME=old.internal;PORT=12345;PROTOCOL=TCPIP;UID=old;PWD=old;';
+
+    const config = loadConfig();
+
+    expect(config.connectionString).toBe(
+      'DATABASE=LEGACY;HOSTNAME=old.internal;PORT=12345;PROTOCOL=TCPIP;UID=old;PWD=old;'
+    );
+  });
+
+  it('individual vars take precedence over DB2_MCP_CONNECTION_STRING', () => {
+    process.env.DB2_MCP_MODE = 'readonly';
+    process.env.DB2_MCP_API_KEY = 'readonly-key';
+    process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=legacy;';
+    process.env.DB2_MCP_CONNECTION_STRING_DATABASE = 'NEWDB';
+    process.env.DB2_MCP_CONNECTION_STRING_HOSTNAME = 'new.internal';
+    process.env.DB2_MCP_CONNECTION_STRING_UID = 'newuser';
+    process.env.DB2_MCP_CONNECTION_STRING_PWD = 'newpass';
+
+    const config = loadConfig();
+
+    expect(config.connectionString).toBe(
+      'DATABASE=NEWDB;HOSTNAME=new.internal;PORT=50000;PROTOCOL=TCPIP;UID=newuser;PWD=newpass;'
+    );
+  });
+
+  it('throws when individual vars are partially set', () => {
+    process.env.DB2_MCP_MODE = 'readonly';
+    process.env.DB2_MCP_API_KEY = 'readonly-key';
+    process.env.DB2_MCP_CONNECTION_STRING_DATABASE = 'SAMPLE';
+    // missing HOSTNAME, UID, PWD
+
     expect(() => loadConfig()).toThrowError(AppError);
   });
 
