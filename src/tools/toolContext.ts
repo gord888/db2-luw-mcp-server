@@ -1,14 +1,13 @@
 import { createHash } from 'node:crypto';
 
 import type { AuditLogger } from '../audit/auditLogger.js';
-import type { ResolvedConfig, ResolvedProfileConfig } from '../config/types.js';
+import type { ResolvedConfig } from '../config/types.js';
 import type { Db2Client, Db2ClientFactory } from '../db2/Db2Client.js';
 import type { DescriptorCatalog } from '../descriptors/descriptorCatalog.js';
 import type { RequestContext } from '../server/requestContext.js';
 
 export interface ToolServices {
   config: ResolvedConfig;
-  profile: ResolvedProfileConfig;
   descriptorCatalog: DescriptorCatalog;
   db2ClientFactory: Db2ClientFactory;
   auditLogger: AuditLogger;
@@ -24,7 +23,7 @@ export interface ToolExecutionPayload {
 }
 
 export async function withDbClient<T>(services: ToolServices, callback: (client: Db2Client) => Promise<T>): Promise<T> {
-  const client = services.db2ClientFactory.create(services.profile);
+  const client = services.db2ClientFactory.create(services.config);
 
   try {
     return await callback(client);

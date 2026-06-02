@@ -1,13 +1,12 @@
 import { createAuditLogger, createLogger } from './audit/auditLogger.js';
-import { loadConfig, resolveConfigPath } from './config/loadConfig.js';
+import { loadConfig } from './config/loadConfig.js';
 import { DefaultDb2ClientFactory } from './db2/IbmDb2Client.js';
 import { loadDescriptorCatalog } from './descriptors/descriptorCatalog.js';
 import { createHttpServer } from './server/httpServer.js';
 
 async function main(): Promise<void> {
   const logger = createLogger();
-  const configPath = resolveConfigPath(process.argv.slice(2));
-  const config = await loadConfig(configPath);
+  const config = loadConfig();
   const descriptorCatalog = await loadDescriptorCatalog(config.descriptorFiles);
   const server = createHttpServer({
     config,
@@ -21,7 +20,7 @@ async function main(): Promise<void> {
       eventType: 'startup',
       host: config.server.host,
       port: config.server.port,
-      profileIds: Object.values(config.profiles).filter((profile) => profile.enabled).map((profile) => profile.id)
+      mode: config.mode
     }, 'DB2 LUW MCP server listening');
   });
 }

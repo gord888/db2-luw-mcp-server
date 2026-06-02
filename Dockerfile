@@ -19,7 +19,6 @@ FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV DB2_MCP_CONFIG_PATH=/app/config/profiles.example.yaml
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl libxml2 \

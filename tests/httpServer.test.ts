@@ -16,7 +16,7 @@ import type {
   QueryResult
 } from '../src/db2/Db2Client.js';
 import { DescriptorCatalog } from '../src/descriptors/descriptorCatalog.js';
-import type { ResolvedConfig, ResolvedProfileConfig } from '../src/config/types.js';
+import type { ResolvedConfig } from '../src/config/types.js';
 import { createHttpServer } from '../src/server/httpServer.js';
 
 class FakeDb2Client implements Db2Client {
@@ -67,57 +67,42 @@ class FakeDb2Client implements Db2Client {
 }
 
 class FakeDb2ClientFactory implements Db2ClientFactory {
-  public constructor(private readonly createClient: (profile: ResolvedProfileConfig) => Db2Client) {}
+  public constructor(private readonly createClient: (config: ResolvedConfig) => Db2Client) {}
 
-  public create(profile: ResolvedProfileConfig): Db2Client {
-    return this.createClient(profile);
+  public create(config: ResolvedConfig): Db2Client {
+    return this.createClient(config);
   }
 }
 
-function createProfile(): ResolvedProfileConfig {
+function createConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
-    id: 'readonly',
-    enabled: true,
     mode: 'readonly',
-    apiKeyEnv: 'READONLY_KEY',
     apiKey: 'readonly-key',
     apiKeyHash: 'readonly-hash',
     callerLabel: 'readonly',
-    db: {
-      connectionStringEnv: 'READONLY_DB',
-      connectionString: 'DATABASE=SAMPLE;',
-      targetLabel: 'readonly-db'
-    },
+    dbLabel: 'readonly-db',
+    connectionString: 'DATABASE=SAMPLE;',
     tools: ['run_query'],
-    procedureAllowlist: []
-  };
-}
-
-function createConfig(profiles: ResolvedProfileConfig | ResolvedProfileConfig[]): ResolvedConfig {
-  const profileList = Array.isArray(profiles) ? profiles : [profiles];
-
-  return {
-    configPath: '/test/config.yaml',
+    procedureAllowlist: [],
     server: {
       host: '127.0.0.1',
       port: 0,
-      publicBaseUrl: 'http://db2-mcp.internal:3000',
-      readinessAuthRequired: true
+      publicBaseUrl: 'http://db2-mcp.internal:3000'
     },
     limits: {
       maxRows: 1000,
       defaultPreviewRows: 50,
       queryTimeoutMs: 30000,
       metadataTimeoutMs: 15000,
-      requestBodyBytes: 1024 * 1024
+      requestBodyBytes: 1048576
     },
     descriptorFiles: [],
-    profiles: Object.fromEntries(profileList.map((profile) => [profile.id, profile]))
+    ...overrides
   };
 }
 
 async function startTestServer(
-  profiles: ResolvedProfileConfig | ResolvedProfileConfig[] = createProfile(),
+  config: ResolvedConfig = createConfig(),
   factory: Db2ClientFactory = new FakeDb2ClientFactory(() => new FakeDb2Client(async () => ({
     columns: ['CURRENT_TIMESTAMP'],
     rows: [{ CURRENT_TIMESTAMP: '2026-05-22T10:00:00.000000' }],
@@ -126,7 +111,7 @@ async function startTestServer(
   })))
 ): Promise<{ url: string; close: () => Promise<void> }> {
   const server = createHttpServer({
-    config: createConfig(profiles),
+    config,
     descriptorCatalog: DescriptorCatalog.empty(),
     db2ClientFactory: factory,
     auditLogger: new MemoryAuditLogger()
@@ -225,7 +210,7 @@ describe('HTTP MCP server compatibility', () => {
 
   it('returns public readiness details based on a real basic select check', async () => {
     const server = await startTestServer(
-      createProfile(),
+      createConfig(),
       new FakeDb2ClientFactory(() => new FakeDb2Client(async (sql) => {
         expect(sql).toContain('SELECT CURRENT TIMESTAMP');
         expect(sql).toContain('SYSIBM.SYSDUMMY1');
@@ -242,20 +227,17 @@ describe('HTTP MCP server compatibility', () => {
 
     const response = await fetch(`${server.url}/readyz`);
     const payload = await response.json() as Record<string, unknown>;
-    const profiles = payload.enabledProfiles as Array<Record<string, unknown>>;
-    const profile = profiles[0];
-    const basicSelect = profile?.basicSelect as Record<string, unknown>;
 
     expect(response.status).toBe(200);
     expect(payload.status).toBe('ready');
-    expect(profile?.id).toBe('readonly');
-    expect(basicSelect.status).toBe('ok');
-    expect(basicSelect.currentTimestamp).toBe('2026-05-22-10.11.12.123456');
+    expect(payload.basicSelect).toBeDefined();
+    expect((payload.basicSelect as Record<string, unknown>).status).toBe('ok');
+    expect((payload.basicSelect as Record<string, unknown>).currentTimestamp).toBe('2026-05-22-10.11.12.123456');
   });
 
-  it('returns a public status page with file locations and profile details', async () => {
+  it('returns a public status page with file locations and active profile details', async () => {
     const server = await startTestServer(
-      createProfile(),
+      createConfig(),
       new FakeDb2ClientFactory(() => new FakeDb2Client(async () => ({
         columns: ['CURRENT_TIMESTAMP'],
         rows: [{ CURRENT_TIMESTAMP: '2026-05-22-10.11.12.123456' }],
@@ -273,61 +255,25 @@ describe('HTTP MCP server compatibility', () => {
     expect(body).toContain('DB2 LUW MCP Status');
     expect(body).toContain('/etc/db2-luw-mcp-server.env');
     expect(body).toContain('/etc/systemd/system/db2-luw-mcp-server.service');
-    expect(body).toContain('Not enabled');
-    expect(body).toContain('Not defined in active YAML');
+    expect(body).toContain('Active Profile');
     expect(body).toContain('readonly');
-    expect(body).toContain('readonly_procedures');
-    expect(body).toContain('full');
     expect(body).toContain('run_query');
-    expect(body).toContain('list_procedures');
-    expect(body).toContain('call_procedure');
-    expect(body).toContain('run_ddl');
-    expect(body).toContain('deploy_procedure');
-    expect(body).toContain('drop_function');
-    expect(body).toContain('deploy_view');
-    expect(body).toContain('SYSPROC.GET_DBSIZE_INFO');
-    expect(body).toContain('CALL SYSPROC.GET_DBSIZE_INFO(?, ?, ?, -1)');
-    expect(body).toContain('CREATE OR REPLACE PROCEDURE DB2MCP_STATUS_CHECK()');
-    expect(body).toContain('Profile is not defined in the active config and is treated as disabled.');
   });
 
-  it('shows actual readonly_procedures and full-mode checks on the status page', async () => {
-    const readonlyProceduresProfile: ResolvedProfileConfig = {
-      ...createProfile(),
-      id: 'readonly_procedures',
+  it('shows readonly_procedures mode checks on the status page', async () => {
+    const config = createConfig({
       mode: 'readonly_procedures',
-      apiKeyEnv: 'READONLY_PROCEDURES_KEY',
       apiKey: 'readonly-procedures-key',
       apiKeyHash: 'readonly-procedures-hash',
       callerLabel: 'readonly_procedures',
-      db: {
-        connectionStringEnv: 'READONLY_PROCEDURES_DB',
-        connectionString: 'DATABASE=SAMPLE;',
-        targetLabel: 'readonly-procedures-db'
-      },
+      dbLabel: 'readonly-procedures-db',
       tools: ['run_query', 'call_procedure'],
       procedureAllowlist: [{ schema: 'SYSPROC', name: 'GET_DBSIZE_INFO' }]
-    };
-    const fullProfile: ResolvedProfileConfig = {
-      ...createProfile(),
-      id: 'full',
-      mode: 'full',
-      apiKeyEnv: 'FULL_KEY',
-      apiKey: 'full-key',
-      apiKeyHash: 'full-hash',
-      callerLabel: 'full',
-      db: {
-        connectionStringEnv: 'FULL_DB',
-        connectionString: 'DATABASE=SAMPLE;',
-        targetLabel: 'full-db'
-      },
-      tools: ['run_query', 'call_procedure', 'run_ddl', 'deploy_procedure', 'drop_procedure', 'deploy_function', 'drop_function', 'deploy_view', 'drop_view'],
-      procedureAllowlist: []
-    };
+    });
     const server = await startTestServer(
-      [readonlyProceduresProfile, fullProfile],
-      new FakeDb2ClientFactory((profile) => {
-        if (profile.id === 'readonly_procedures') {
+      config,
+      new FakeDb2ClientFactory((cfg) => {
+        if (cfg.mode === 'readonly_procedures') {
           return new FakeDb2Client(
             async () => ({
               columns: ['CURRENT_TIMESTAMP'],
@@ -349,23 +295,12 @@ describe('HTTP MCP server compatibility', () => {
           );
         }
 
-        return new FakeDb2Client(async (_sql, _params, options) => {
-          if (options.label?.includes('create or replace db2mcp_status_check')) {
-            return {
-              columns: [],
-              rows: [],
-              rowCount: 0,
-              warnings: []
-            };
-          }
-
-          return {
-            columns: ['CURRENT_TIMESTAMP'],
-            rows: [{ CURRENT_TIMESTAMP: '2026-05-22-10.11.12.123456' }],
-            rowCount: 1,
-            warnings: []
-          };
-        });
+        return new FakeDb2Client(async () => ({
+          columns: ['CURRENT_TIMESTAMP'],
+          rows: [{ CURRENT_TIMESTAMP: '2026-05-22-10.11.12.123456' }],
+          rowCount: 1,
+          warnings: []
+        }));
       })
     );
     openServers.push(server);
@@ -374,12 +309,52 @@ describe('HTTP MCP server compatibility', () => {
     const body = await response.text();
 
     expect(response.status).toBe(200);
-    expect(body).toContain('Select probe');
+    expect(body).toContain('Basic Select Probe');
     expect(body).toContain('Stored procedure probe');
-    expect(body).toContain('Create or replace procedure probe');
     expect(body).toContain('Stored procedure call succeeded.');
+    expect(body).toContain('SYSPROC.GET_DBSIZE_INFO');
+    expect(body).toContain('CALL SYSPROC.GET_DBSIZE_INFO(?, ?, ?, -1)');
+  });
+
+  it('shows full-mode checks including create procedure probe on the status page', async () => {
+    const config = createConfig({
+      mode: 'full',
+      apiKey: 'full-key',
+      apiKeyHash: 'full-hash',
+      callerLabel: 'full',
+      dbLabel: 'full-db',
+      tools: ['run_query', 'call_procedure', 'run_ddl', 'deploy_procedure', 'drop_procedure', 'deploy_function', 'drop_function', 'deploy_view', 'drop_view'],
+      procedureAllowlist: []
+    });
+    const server = await startTestServer(
+      config,
+      new FakeDb2ClientFactory(() => new FakeDb2Client(async (_sql, _params, options) => {
+        if (options.label?.includes('health_create_procedure_probe')) {
+          return {
+            columns: [],
+            rows: [],
+            rowCount: 0,
+            warnings: []
+          };
+        }
+
+        return {
+          columns: ['CURRENT_TIMESTAMP'],
+          rows: [{ CURRENT_TIMESTAMP: '2026-05-22-10.11.12.123456' }],
+          rowCount: 1,
+          warnings: []
+        };
+      }))
+    );
+    openServers.push(server);
+
+    const response = await fetch(`${server.url}/status`);
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toContain('Create or replace procedure probe');
     expect(body).toContain('Create or replace procedure succeeded.');
-    expect(body).toContain('CREATE OR REPLACE PROCEDURE DB2MCP_STATUS_CHECK()');
+    expect(body).toContain('CREATE OR REPLACE PROCEDURE DB2MCP_HEALTH_PROBE()');
     expect(body).toContain('run_ddl');
     expect(body).toContain('deploy_procedure');
     expect(body).toContain('drop_view');
@@ -387,7 +362,7 @@ describe('HTTP MCP server compatibility', () => {
 
   it('marks health as degraded when the DB select check fails', async () => {
     const server = await startTestServer(
-      createProfile(),
+      createConfig(),
       new FakeDb2ClientFactory(() => new FakeDb2Client(async () => {
         throw new Error('Database unavailable');
       }))
@@ -396,13 +371,11 @@ describe('HTTP MCP server compatibility', () => {
 
     const response = await fetch(`${server.url}/healthz`);
     const payload = await response.json() as Record<string, unknown>;
-    const profiles = payload.enabledProfiles as Array<Record<string, unknown>>;
-    const basicSelect = profiles[0]?.basicSelect as Record<string, unknown>;
-    const error = basicSelect.error as Record<string, unknown>;
 
     expect(response.status).toBe(503);
     expect(payload.status).toBe('degraded');
-    expect(basicSelect.status).toBe('error');
-    expect(error.message).toContain('Database unavailable');
+    expect(payload.basicSelect).toBeDefined();
+    expect((payload.basicSelect as Record<string, unknown>).status).toBe('error');
+    expect(((payload.basicSelect as Record<string, unknown>).error as Record<string, unknown>).message).toContain('Database unavailable');
   });
 });

@@ -1,6 +1,6 @@
 import type { IncomingHttpHeaders } from 'node:http';
 
-import type { ResolvedConfig, ResolvedProfileConfig } from '../config/types.js';
+import type { ResolvedConfig } from '../config/types.js';
 import { AppError } from '../errors/AppError.js';
 
 function readHeaderValue(value: string | string[] | undefined): string | undefined {
@@ -11,7 +11,7 @@ function readHeaderValue(value: string | string[] | undefined): string | undefin
   return value;
 }
 
-export function extractBearerToken(headers: IncomingHttpHeaders): string {
+function extractBearerToken(headers: IncomingHttpHeaders): string {
   const authorization = readHeaderValue(headers.authorization);
 
   if (!authorization) {
@@ -27,28 +27,10 @@ export function extractBearerToken(headers: IncomingHttpHeaders): string {
   return token;
 }
 
-export function authenticateRequest(headers: IncomingHttpHeaders, config: ResolvedConfig): ResolvedProfileConfig {
+export function authenticateRequest(headers: IncomingHttpHeaders, config: ResolvedConfig): void {
   const token = extractBearerToken(headers);
-  const enabledProfiles = Object.values(config.profiles).filter((profile) => profile.enabled);
-  const matchedProfiles = enabledProfiles.filter((profile) => profile.apiKey === token);
 
-  if (matchedProfiles.length === 0) {
-    throw new AppError('AUTH_INVALID', 'Unknown API key.', 401);
+  if (token !== config.apiKey) {
+    throw new AppError('AUTH_INVALID', 'Invalid API key.', 401);
   }
-
-  if (matchedProfiles.length > 1) {
-    throw new AppError('AUTH_INVALID', 'API key resolved to multiple profiles.', 401);
-  }
-
-  const matchedProfile = matchedProfiles[0];
-
-  if (!matchedProfile) {
-    throw new AppError('AUTH_INVALID', 'Unknown API key.', 401);
-  }
-
-  if (!matchedProfile.enabled) {
-    throw new AppError('PROFILE_DISABLED', `Profile ${matchedProfile.id} is disabled.`, 403);
-  }
-
-  return matchedProfile;
 }

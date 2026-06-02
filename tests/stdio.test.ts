@@ -1,67 +1,60 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import type { ResolvedConfig } from '../src/config/types.js';
-import { resolveStdioProfile } from '../src/stdio.js';
+import { loadConfig } from '../src/config/loadConfig.js';
+import { AppError } from '../src/errors/AppError.js';
 
-function createConfig(enabledProfileIds: string[]): ResolvedConfig {
-  const createProfile = (id: string) => ({
-    id,
-    enabled: enabledProfileIds.includes(id),
-    mode: id === 'readonly_procedures' ? 'readonly_procedures' as const : 'readonly' as const,
-    apiKeyEnv: `API_KEY_${id.toUpperCase()}`,
-    apiKey: `key-${id}`,
-    apiKeyHash: `hash-${id}`,
-    callerLabel: id,
-    db: {
-      connectionStringEnv: `DB_${id.toUpperCase()}`,
-      connectionString: `DATABASE=${id};`,
-      targetLabel: id
-    },
-    tools: ['run_query'] as const,
-    procedureAllowlist: []
+const trackedEnv = [
+  'DB2_MCP_MODE',
+  'DB2_MCP_API_KEY',
+  'DB2_MCP_CONNECTION_STRING'
+] as const;
+
+afterEach(() => {
+  for (const key of trackedEnv) {
+    delete process.env[key];
+  }
+});
+
+describe('stdio config resolution', () => {
+  it('loads config from env vars without requiring --profile arg', () => {
+    process.env.DB2_MCP_MODE = 'readonly';
+    process.env.DB2_MCP_API_KEY = 'readonly-key';
+    process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=SAMPLE;';
+
+    const config = loadConfig();
+
+    expect(config.mode).toBe('readonly');
+    expect(config.apiKey).toBe('readonly-key');
+    expect(config.connectionString).toBe('DATABASE=SAMPLE;');
   });
 
-  return {
-    configPath: '/test/config.yaml',
-    server: {
-      host: '127.0.0.1',
-      port: 3000,
-      readinessAuthRequired: true
-    },
-    limits: {
-      maxRows: 1000,
-      defaultPreviewRows: 50,
-      queryTimeoutMs: 30000,
-      metadataTimeoutMs: 15000,
-      requestBodyBytes: 1024 * 1024
-    },
-    descriptorFiles: [],
-    profiles: {
-      readonly: createProfile('readonly'),
-      readonly_procedures: {
-        ...createProfile('readonly_procedures'),
-        tools: ['run_query', 'call_procedure']
-      }
-    }
-  };
-}
+  it('loads full mode when DB2_MCP_MODE is full', () => {
+    process.env.DB2_MCP_MODE = 'full';
+    process.env.DB2_MCP_API_KEY = 'full-key';
+    process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=SAMPLE;';
 
-describe('resolveStdioProfile', () => {
-  it('selects the only enabled profile automatically', () => {
-    const profile = resolveStdioProfile([], createConfig(['readonly']));
+    const config = loadConfig();
 
-    expect(profile.id).toBe('readonly');
+    expect(config.mode).toBe('full');
+    expect(config.tools).toContain('run_ddl');
   });
 
-  it('requires an explicit profile when multiple profiles are enabled', () => {
-    expect(() => resolveStdioProfile([], createConfig(['readonly', 'readonly_procedures']))).toThrow(
-      /requires --profile/
-    );
+  it('loads readonly_procedures mode with procedure tools', () => {
+    process.env.DB2_MCP_MODE = 'readonly_procedures';
+    process.env.DB2_MCP_API_KEY = 'readonly-procedures-key';
+    process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=SAMPLE;';
+
+    const config = loadConfig();
+
+    expect(config.mode).toBe('readonly_procedures');
+    expect(config.tools).toContain('call_procedure');
+    expect(config.tools).not.toContain('run_ddl');
   });
 
-  it('uses the requested enabled profile', () => {
-    const profile = resolveStdioProfile(['--profile=readonly_procedures'], createConfig(['readonly', 'readonly_procedures']));
+  it('throws when mode env var is not set', () => {
+    process.env.DB2_MCP_API_KEY = 'key';
+    process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=SAMPLE;';
 
-    expect(profile.id).toBe('readonly_procedures');
+    expect(() => loadConfig()).toThrowError(AppError);
   });
 });

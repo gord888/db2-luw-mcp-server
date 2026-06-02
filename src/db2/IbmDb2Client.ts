@@ -1,5 +1,6 @@
 import type { Database, SQLParam } from 'ibm_db';
 
+import { AppError } from '../errors/AppError.js';
 import type {
   DatabaseMetadata,
   Db2Client,
@@ -12,8 +13,7 @@ import type {
   QueryOptions,
   QueryResult
 } from './Db2Client.js';
-import type { ResolvedProfileConfig } from '../config/types.js';
-import { AppError } from '../errors/AppError.js';
+import type { ResolvedConfig } from '../config/types.js';
 
 function isDirectionalParameter(parameter: Db2Parameter): parameter is Db2DirectionalParameter {
   return typeof parameter === 'object' && parameter !== null && 'direction' in parameter;
@@ -278,7 +278,7 @@ export class IbmDb2Client implements Db2Client {
 }
 
 export class DefaultDb2ClientFactory implements Db2ClientFactory {
-  public create(profile: ResolvedProfileConfig): Db2Client {
-    return new IbmDb2Client(profile.db.connectionString);
+  public create(config: ResolvedConfig): Db2Client {
+    return new IbmDb2Client(config.connectionString);
   }
 }

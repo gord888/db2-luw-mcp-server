@@ -1,4 +1,4 @@
-import type { ResolvedProfileConfig } from '../config/types.js';
+import type { ResolvedConfig } from '../config/types.js';
 
 export type Db2Scalar = string | number | boolean | null;
 
@@ -56,5 +56,5 @@ export interface Db2Client {
 }
 
 export interface Db2ClientFactory {
-  create(profile: ResolvedProfileConfig): Db2Client;
+  create(config: ResolvedConfig): Db2Client;
 }
