@@ -33,6 +33,13 @@ function parseMode(raw: string): AccessMode {
   return raw as AccessMode;
 }
 
+function parsePositiveInt(name: string, raw: string): number {
+  if (!/^\s*\d+\s*$/.test(raw)) {
+    throw new AppError('CONFIG_INVALID', `${name} must be a positive integer. Got: ${raw}`, 500);
+  }
+  return parseInt(raw, 10);
+}
+
 export function loadConfig(): ResolvedConfig {
   const mode = parseMode(requiredEnv('DB2_MCP_MODE'));
   const apiKey = requiredEnv('DB2_MCP_API_KEY');
@@ -59,15 +66,15 @@ export function loadConfig(): ResolvedConfig {
     procedureAllowlist,
     server: {
       host: optionalEnv('DB2_MCP_HOST', '0.0.0.0'),
-      port: parseInt(optionalEnv('DB2_MCP_PORT', '3000'), 10),
+      port: parsePositiveInt('DB2_MCP_PORT', optionalEnv('DB2_MCP_PORT', '3000')),
       publicBaseUrl: process.env.DB2_MCP_PUBLIC_BASE_URL || undefined
     },
     limits: {
-      maxRows: parseInt(optionalEnv('DB2_MCP_MAX_ROWS', '1000'), 10),
-      defaultPreviewRows: parseInt(optionalEnv('DB2_MCP_DEFAULT_PREVIEW_ROWS', '50'), 10),
-      queryTimeoutMs: parseInt(optionalEnv('DB2_MCP_QUERY_TIMEOUT_MS', '30000'), 10),
-      metadataTimeoutMs: parseInt(optionalEnv('DB2_MCP_METADATA_TIMEOUT_MS', '15000'), 10),
-      requestBodyBytes: parseInt(optionalEnv('DB2_MCP_REQUEST_BODY_BYTES', '1048576'), 10)
+      maxRows: parsePositiveInt('DB2_MCP_MAX_ROWS', optionalEnv('DB2_MCP_MAX_ROWS', '1000')),
+      defaultPreviewRows: parsePositiveInt('DB2_MCP_DEFAULT_PREVIEW_ROWS', optionalEnv('DB2_MCP_DEFAULT_PREVIEW_ROWS', '50')),
+      queryTimeoutMs: parsePositiveInt('DB2_MCP_QUERY_TIMEOUT_MS', optionalEnv('DB2_MCP_QUERY_TIMEOUT_MS', '30000')),
+      metadataTimeoutMs: parsePositiveInt('DB2_MCP_METADATA_TIMEOUT_MS', optionalEnv('DB2_MCP_METADATA_TIMEOUT_MS', '15000')),
+      requestBodyBytes: parsePositiveInt('DB2_MCP_REQUEST_BODY_BYTES', optionalEnv('DB2_MCP_REQUEST_BODY_BYTES', '1048576'))
     },
     descriptorFiles
   };

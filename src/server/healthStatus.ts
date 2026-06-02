@@ -171,7 +171,7 @@ export async function collectServiceHealthSummary(
     });
   }
 
-  await client.close();
+  await client.close().catch(() => undefined);
 
   const overallStatus = basicSelectStatus === 'ok'
     && checks.every((check) => check.status !== 'error') ? 'ok' : 'degraded';
