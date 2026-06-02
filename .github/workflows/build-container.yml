@@ -154,6 +154,7 @@ jobs:
           IMAGE_REF="${LOGIN_SERVER}/${IMAGE_REPO}:${BUILD_VERSION}"
           STABLE_REF="${LOGIN_SERVER}/${IMAGE_REPO}:${CONTAINER_STABLE_TAG}"
           echo "LOGIN_SERVER=${LOGIN_SERVER}" >> "$GITHUB_ENV"
+          echo "IMAGE_REPO=${IMAGE_REPO}" >> "$GITHUB_ENV"
           echo "BUILD_VERSION=${BUILD_VERSION}" >> "$GITHUB_ENV"
           echo "IMAGE_REF=${IMAGE_REF}" >> "$GITHUB_ENV"
           echo "STABLE_REF=${STABLE_REF}" >> "$GITHUB_ENV"
