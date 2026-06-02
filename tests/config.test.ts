@@ -1,15 +1,30 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { loadConfig } from '../src/config/loadConfig.js';
+import { AppError } from '../src/errors/AppError.js';
 
 const trackedEnv = [
-  'DB2_MCP_API_KEY_READONLY',
-  'DB2_MCP_DB_READONLY',
-  'DB2_MCP_API_KEY_FULL',
-  'DB2_MCP_DB_FULL'
+  'DB2_MCP_MODE',
+  'DB2_MCP_API_KEY',
+  'DB2_MCP_CONNECTION_STRING',
+  'DB2_MCP_CONNECTION_STRING_DATABASE',
+  'DB2_MCP_CONNECTION_STRING_HOSTNAME',
+  'DB2_MCP_CONNECTION_STRING_PORT',
+  'DB2_MCP_CONNECTION_STRING_PROTOCOL',
+  'DB2_MCP_CONNECTION_STRING_UID',
+  'DB2_MCP_CONNECTION_STRING_PWD',
+  'DB2_MCP_CALLER_LABEL',
+  'DB2_MCP_DB_LABEL',
+  'DB2_MCP_HOST',
+  'DB2_MCP_PORT',
+  'DB2_MCP_PUBLIC_BASE_URL',
+  'DB2_MCP_MAX_ROWS',
+  'DB2_MCP_DEFAULT_PREVIEW_ROWS',
+  'DB2_MCP_QUERY_TIMEOUT_MS',
+  'DB2_MCP_METADATA_TIMEOUT_MS',
+  'DB2_MCP_REQUEST_BODY_BYTES',
+  'DB2_MCP_DESCRIPTOR_FILES',
+  'DB2_MCP_PROCEDURE_ALLOWLIST'
 ] as const;
 
 afterEach(() => {
@@ -19,145 +34,198 @@ afterEach(() => {
 });
 
 describe('loadConfig', () => {
-  it('loads env-backed secrets and resolves defaults', async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'db2-mcp-config-'));
-    const configPath = path.join(tempDirectory, 'config.yaml');
+  it('loads required env vars and resolves defaults for readonly mode', () => {
+    process.env.DB2_MCP_MODE = 'readonly';
+    process.env.DB2_MCP_API_KEY = 'readonly-key';
+    process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=SAMPLE;';
 
-    process.env.DB2_MCP_API_KEY_READONLY = 'readonly-key';
-    process.env.DB2_MCP_DB_READONLY = 'DATABASE=SAMPLE;';
+    const config = loadConfig();
 
-    await writeFile(configPath, `
-server:
-  host: "127.0.0.1"
-  port: 3000
-limits:
-  maxRows: 1000
-  defaultPreviewRows: 50
-  queryTimeoutMs: 30000
-  metadataTimeoutMs: 15000
-profiles:
-  readonly:
-    mode: "readonly"
-    apiKeyEnv: "DB2_MCP_API_KEY_READONLY"
-    db:
-      connectionStringEnv: "DB2_MCP_DB_READONLY"
-    tools:
-      - "run_query"
-`, 'utf8');
-
-    const config = await loadConfig(configPath);
-
-    expect(config.server.readinessAuthRequired).toBe(true);
-    expect(config.limits.requestBodyBytes).toBe(1024 * 1024);
-    expect(config.profiles.readonly.apiKey).toBe('readonly-key');
-    expect(config.profiles.readonly.db.connectionString).toBe('DATABASE=SAMPLE;');
-    expect(config.profiles.readonly.db.targetLabel).toBe('readonly');
+    expect(config.mode).toBe('readonly');
+    expect(config.apiKey).toBe('readonly-key');
+    expect(config.apiKeyHash).toBeTruthy();
+    expect(config.connectionString).toBe('DATABASE=SAMPLE;');
+    expect(config.callerLabel).toBe('readonly');
+    expect(config.dbLabel).toBe('readonly');
+    expect(config.tools).toContain('run_query');
+    expect(config.procedureAllowlist).toEqual([]);
+    expect(config.descriptorFiles).toEqual([]);
   });
 
-  it('does not require secrets for disabled profiles', async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'db2-mcp-config-'));
-    const configPath = path.join(tempDirectory, 'config.yaml');
+  it('uses defaults for optional fields', () => {
+    process.env.DB2_MCP_MODE = 'readonly';
+    process.env.DB2_MCP_API_KEY = 'readonly-key';
+    process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=SAMPLE;';
 
-    process.env.DB2_MCP_API_KEY_READONLY = 'readonly-key';
-    process.env.DB2_MCP_DB_READONLY = 'DATABASE=SAMPLE;';
+    const config = loadConfig();
 
-    await writeFile(configPath, `
-server:
-  host: "127.0.0.1"
-  port: 3000
-limits:
-  maxRows: 1000
-  defaultPreviewRows: 50
-  queryTimeoutMs: 30000
-  metadataTimeoutMs: 15000
-profiles:
-  readonly:
-    mode: "readonly"
-    apiKeyEnv: "DB2_MCP_API_KEY_READONLY"
-    db:
-      connectionStringEnv: "DB2_MCP_DB_READONLY"
-    tools:
-      - "run_query"
-  full:
-    enabled: false
-    mode: "full"
-    apiKeyEnv: "DB2_MCP_API_KEY_FULL"
-    db:
-      connectionStringEnv: "DB2_MCP_DB_FULL"
-    tools: []
-`, 'utf8');
-
-    const config = await loadConfig(configPath);
-
-    expect(config.profiles.full.enabled).toBe(false);
-    expect(config.profiles.full.apiKey).toBe('unused-api-key-full');
-    expect(config.profiles.full.db.connectionString).toBe('');
+    expect(config.server.host).toBe('0.0.0.0');
+    expect(config.server.port).toBe(3000);
+    expect(config.server.publicBaseUrl).toBeUndefined();
+    expect(config.limits.maxRows).toBe(1000);
+    expect(config.limits.defaultPreviewRows).toBe(50);
+    expect(config.limits.queryTimeoutMs).toBe(30000);
+    expect(config.limits.metadataTimeoutMs).toBe(15000);
+    expect(config.limits.requestBodyBytes).toBe(1048576);
   });
 
-  it('can load stdio config without api key env vars', async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'db2-mcp-config-'));
-    const configPath = path.join(tempDirectory, 'config.yaml');
+  it('overrides optional fields from env vars', () => {
+    process.env.DB2_MCP_MODE = 'readonly';
+    process.env.DB2_MCP_API_KEY = 'readonly-key';
+    process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=SAMPLE;';
+    process.env.DB2_MCP_CALLER_LABEL = 'custom-caller';
+    process.env.DB2_MCP_DB_LABEL = 'custom-db';
+    process.env.DB2_MCP_HOST = '192.168.1.1';
+    process.env.DB2_MCP_PORT = '8080';
+    process.env.DB2_MCP_PUBLIC_BASE_URL = 'https://db2-mcp.example.com';
+    process.env.DB2_MCP_MAX_ROWS = '500';
+    process.env.DB2_MCP_DEFAULT_PREVIEW_ROWS = '25';
+    process.env.DB2_MCP_QUERY_TIMEOUT_MS = '60000';
+    process.env.DB2_MCP_METADATA_TIMEOUT_MS = '30000';
+    process.env.DB2_MCP_REQUEST_BODY_BYTES = '2097152';
 
-    process.env.DB2_MCP_DB_READONLY = 'DATABASE=SAMPLE;';
+    const config = loadConfig();
 
-    await writeFile(configPath, `
-server:
-  host: "127.0.0.1"
-  port: 3000
-limits:
-  maxRows: 1000
-  defaultPreviewRows: 50
-  queryTimeoutMs: 30000
-  metadataTimeoutMs: 15000
-profiles:
-  readonly:
-    mode: "readonly"
-    apiKeyEnv: "DB2_MCP_API_KEY_READONLY"
-    db:
-      connectionStringEnv: "DB2_MCP_DB_READONLY"
-    tools:
-      - "run_query"
-`, 'utf8');
-
-    const config = await loadConfig(configPath, {
-      requireApiKeys: false
-    });
-
-    expect(config.profiles.readonly.apiKey).toBe('unused-api-key-readonly');
-    expect(config.profiles.readonly.db.connectionString).toBe('DATABASE=SAMPLE;');
+    expect(config.callerLabel).toBe('custom-caller');
+    expect(config.dbLabel).toBe('custom-db');
+    expect(config.server.host).toBe('192.168.1.1');
+    expect(config.server.port).toBe(8080);
+    expect(config.server.publicBaseUrl).toBe('https://db2-mcp.example.com');
+    expect(config.limits.maxRows).toBe(500);
+    expect(config.limits.defaultPreviewRows).toBe(25);
+    expect(config.limits.queryTimeoutMs).toBe(60000);
+    expect(config.limits.metadataTimeoutMs).toBe(30000);
+    expect(config.limits.requestBodyBytes).toBe(2097152);
   });
 
-  it('loads implemented full-mode DDL tools for enabled full profiles', async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), 'db2-mcp-config-'));
-    const configPath = path.join(tempDirectory, 'config.yaml');
+  it('loads full mode with DDL tools', () => {
+    process.env.DB2_MCP_MODE = 'full';
+    process.env.DB2_MCP_API_KEY = 'full-key';
+    process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=SAMPLE;';
 
-    process.env.DB2_MCP_API_KEY_FULL = 'full-key';
-    process.env.DB2_MCP_DB_FULL = 'DATABASE=SAMPLE;';
+    const config = loadConfig();
 
-    await writeFile(configPath, `
-server:
-  host: "127.0.0.1"
-  port: 3000
-limits:
-  maxRows: 1000
-  defaultPreviewRows: 50
-  queryTimeoutMs: 30000
-  metadataTimeoutMs: 15000
-profiles:
-  full:
-    mode: "full"
-    apiKeyEnv: "DB2_MCP_API_KEY_FULL"
-    db:
-      connectionStringEnv: "DB2_MCP_DB_FULL"
-    tools:
-      - "run_query"
-      - "run_ddl"
-      - "deploy_view"
-      - "drop_view"
-`, 'utf8');
+    expect(config.mode).toBe('full');
+    expect(config.tools).toEqual(expect.arrayContaining(['run_ddl', 'deploy_view', 'drop_view', 'deploy_procedure']));
+  });
 
-    const config = await loadConfig(configPath);
+  it('loads readonly_procedures mode with procedure tools', () => {
+    process.env.DB2_MCP_MODE = 'readonly_procedures';
+    process.env.DB2_MCP_API_KEY = 'procedures-key';
+    process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=SAMPLE;';
 
-    expect(config.profiles.full.tools).toEqual(['run_query', 'run_ddl', 'deploy_view', 'drop_view']);
+    const config = loadConfig();
+
+    expect(config.mode).toBe('readonly_procedures');
+    expect(config.tools).toEqual(expect.arrayContaining(['run_query', 'call_procedure', 'list_procedures']));
+    expect(config.tools).not.toContain('run_ddl');
+  });
+
+  it('parses procedure allowlist from env var', () => {
+    process.env.DB2_MCP_MODE = 'readonly_procedures';
+    process.env.DB2_MCP_API_KEY = 'procedures-key';
+    process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=SAMPLE;';
+    process.env.DB2_MCP_PROCEDURE_ALLOWLIST = 'SYSPROC.GET_DBSIZE_INFO,APP.SAFE_PROC';
+
+    const config = loadConfig();
+
+    expect(config.procedureAllowlist).toEqual([
+      { schema: 'SYSPROC', name: 'GET_DBSIZE_INFO' },
+      { schema: 'APP', name: 'SAFE_PROC' }
+    ]);
+  });
+
+  it('parses descriptor files from env var', () => {
+    process.env.DB2_MCP_MODE = 'readonly';
+    process.env.DB2_MCP_API_KEY = 'readonly-key';
+    process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=SAMPLE;';
+    process.env.DB2_MCP_DESCRIPTOR_FILES = '/etc/descriptors.yaml,/opt/extra.yaml';
+
+    const config = loadConfig();
+
+    expect(config.descriptorFiles).toHaveLength(2);
+    expect(config.descriptorFiles[0]).toContain('descriptors.yaml');
+    expect(config.descriptorFiles[1]).toContain('extra.yaml');
+  });
+
+  it('throws when required env vars are missing', () => {
+    expect(() => loadConfig()).toThrowError(AppError);
+  });
+
+  it('builds connection string from individual env vars with defaults', () => {
+    process.env.DB2_MCP_MODE = 'readonly';
+    process.env.DB2_MCP_API_KEY = 'readonly-key';
+    process.env.DB2_MCP_CONNECTION_STRING_DATABASE = 'SAMPLE';
+    process.env.DB2_MCP_CONNECTION_STRING_HOSTNAME = 'db2.internal';
+    process.env.DB2_MCP_CONNECTION_STRING_UID = 'db2_mcp';
+    process.env.DB2_MCP_CONNECTION_STRING_PWD = 'secret';
+
+    const config = loadConfig();
+
+    expect(config.connectionString).toBe(
+      'DATABASE=SAMPLE;HOSTNAME=db2.internal;PORT=50000;PROTOCOL=TCPIP;UID=db2_mcp;PWD=secret;'
+    );
+  });
+
+  it('uses individual vars with custom port and protocol', () => {
+    process.env.DB2_MCP_MODE = 'readonly';
+    process.env.DB2_MCP_API_KEY = 'readonly-key';
+    process.env.DB2_MCP_CONNECTION_STRING_DATABASE = 'PRODDB';
+    process.env.DB2_MCP_CONNECTION_STRING_HOSTNAME = 'db2.prod.internal';
+    process.env.DB2_MCP_CONNECTION_STRING_PORT = '50001';
+    process.env.DB2_MCP_CONNECTION_STRING_PROTOCOL = 'TCP';
+    process.env.DB2_MCP_CONNECTION_STRING_UID = 'admin';
+    process.env.DB2_MCP_CONNECTION_STRING_PWD = 'admin-secret';
+
+    const config = loadConfig();
+
+    expect(config.connectionString).toBe(
+      'DATABASE=PRODDB;HOSTNAME=db2.prod.internal;PORT=50001;PROTOCOL=TCP;UID=admin;PWD=admin-secret;'
+    );
+  });
+
+  it('falls back to DB2_MCP_CONNECTION_STRING when individual vars not set', () => {
+    process.env.DB2_MCP_MODE = 'readonly';
+    process.env.DB2_MCP_API_KEY = 'readonly-key';
+    process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=LEGACY;HOSTNAME=old.internal;PORT=12345;PROTOCOL=TCPIP;UID=old;PWD=old;';
+
+    const config = loadConfig();
+
+    expect(config.connectionString).toBe(
+      'DATABASE=LEGACY;HOSTNAME=old.internal;PORT=12345;PROTOCOL=TCPIP;UID=old;PWD=old;'
+    );
+  });
+
+  it('individual vars take precedence over DB2_MCP_CONNECTION_STRING', () => {
+    process.env.DB2_MCP_MODE = 'readonly';
+    process.env.DB2_MCP_API_KEY = 'readonly-key';
+    process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=legacy;';
+    process.env.DB2_MCP_CONNECTION_STRING_DATABASE = 'NEWDB';
+    process.env.DB2_MCP_CONNECTION_STRING_HOSTNAME = 'new.internal';
+    process.env.DB2_MCP_CONNECTION_STRING_UID = 'newuser';
+    process.env.DB2_MCP_CONNECTION_STRING_PWD = 'newpass';
+
+    const config = loadConfig();
+
+    expect(config.connectionString).toBe(
+      'DATABASE=NEWDB;HOSTNAME=new.internal;PORT=50000;PROTOCOL=TCPIP;UID=newuser;PWD=newpass;'
+    );
+  });
+
+  it('throws when individual vars are partially set', () => {
+    process.env.DB2_MCP_MODE = 'readonly';
+    process.env.DB2_MCP_API_KEY = 'readonly-key';
+    process.env.DB2_MCP_CONNECTION_STRING_DATABASE = 'SAMPLE';
+    // missing HOSTNAME, UID, PWD
+
+    expect(() => loadConfig()).toThrowError(AppError);
+  });
+
+  it('throws for invalid mode', () => {
+    process.env.DB2_MCP_MODE = 'superadmin';
+    process.env.DB2_MCP_API_KEY = 'key';
+    process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=SAMPLE;';
+
+    expect(() => loadConfig()).toThrowError(AppError);
   });
 });

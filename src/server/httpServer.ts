@@ -132,14 +132,13 @@ async function handleMcp(
 ): Promise<void> {
   normalizeMcpAcceptHeader(req);
 
-  const profile = authenticateRequest(req.headers, dependencies.config);
-  const requestContext = createRequestContext(profile, req.method ?? 'POST', req.url ?? '/mcp');
+  authenticateRequest(req.headers, dependencies.config);
+  const requestContext = createRequestContext(dependencies.config, req.method ?? 'POST', req.url ?? '/mcp');
   const requestBody = (req.method ?? 'GET') === 'POST'
     ? await readJsonBody(req, dependencies.config.limits.requestBodyBytes)
     : undefined;
   const server = createMcpServer({
     config: dependencies.config,
-    profile,
     descriptorCatalog: dependencies.descriptorCatalog,
     db2ClientFactory: dependencies.db2ClientFactory,
     auditLogger: dependencies.auditLogger,

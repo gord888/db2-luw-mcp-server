@@ -12,8 +12,8 @@ function canCallProcedure(
   schema: string,
   procedure: string
 ): boolean {
-  return services.profile.mode === 'full'
-    || isProcedureAllowlisted(services.profile.procedureAllowlist, schema, procedure);
+  return services.config.mode === 'full'
+    || isProcedureAllowlisted(services.config.procedureAllowlist, schema, procedure);
 }
 
 export function getProcedureToolDefinitions(): ToolDefinition[] {
@@ -40,12 +40,12 @@ export function getProcedureToolDefinitions(): ToolDefinition[] {
           label: 'list_procedures'
         });
 
-        const shouldFilter = allowedOnly ?? services.profile.mode === 'readonly_procedures';
+        const shouldFilter = allowedOnly ?? services.config.mode === 'readonly_procedures';
         const procedures = shouldFilter
           ? result.rows.filter((row) => {
               const candidate = row as Record<string, unknown>;
               return isProcedureAllowlisted(
-                services.profile.procedureAllowlist,
+                services.config.procedureAllowlist,
                 String(candidate.SCHEMA ?? ''),
                 String(candidate.PROCEDURE_NAME ?? '')
               );
@@ -103,9 +103,9 @@ export function getProcedureToolDefinitions(): ToolDefinition[] {
           data: {
             procedure: routine.rows[0] ?? null,
             parameters: parameters.rows,
-            allowlisted: isProcedureAllowlisted(services.profile.procedureAllowlist, normalizedSchema, normalizedProcedure),
+            allowlisted: isProcedureAllowlisted(services.config.procedureAllowlist, normalizedSchema, normalizedProcedure),
             callable: canCallProcedure(services, normalizedSchema, normalizedProcedure),
-            accessPolicy: services.profile.mode === 'full' ? 'unrestricted' : 'allowlist'
+            accessPolicy: services.config.mode === 'full' ? 'unrestricted' : 'allowlist'
           },
           rowCount: parameters.rowCount,
           normalizedObjectNames: [`${normalizedSchema}.${normalizedProcedure}`]
@@ -123,8 +123,8 @@ export function getProcedureToolDefinitions(): ToolDefinition[] {
       handler: async ({ schema, procedure, params }, services) => {
         const normalizedSchema = schema.toUpperCase();
         const normalizedProcedure = procedure.toUpperCase();
-        if (services.profile.mode !== 'full') {
-          assertProcedureAllowlisted(services.profile.procedureAllowlist, normalizedSchema, normalizedProcedure);
+        if (services.config.mode !== 'full') {
+          assertProcedureAllowlisted(services.config.procedureAllowlist, normalizedSchema, normalizedProcedure);
         }
 
         return withDbClient(services, async (client) => {

@@ -17,7 +17,7 @@ import type {
 import { DescriptorCatalog } from '../src/descriptors/descriptorCatalog.js';
 import { createMcpServer } from '../src/server/mcpServer.js';
 import { createRequestContext } from '../src/server/requestContext.js';
-import type { ResolvedConfig, ResolvedProfileConfig } from '../src/config/types.js';
+import type { ResolvedConfig } from '../src/config/types.js';
 
 class FakeDb2Client implements Db2Client {
   public constructor(
@@ -67,10 +67,10 @@ class FakeDb2Client implements Db2Client {
 }
 
 class FakeDb2ClientFactory implements Db2ClientFactory {
-  public constructor(private readonly createClient: () => Db2Client) {}
+  public constructor(private readonly createClient: (config: ResolvedConfig) => Db2Client) {}
 
-  public create(_profile: ResolvedProfileConfig): Db2Client {
-    return this.createClient();
+  public create(config: ResolvedConfig): Db2Client {
+    return this.createClient(config);
   }
 }
 
@@ -80,69 +80,64 @@ interface ConnectedTestServer {
   close: () => Promise<void>;
 }
 
-function createConfig(profile: ResolvedProfileConfig): ResolvedConfig {
+function createReadonlyConfig(tools: ResolvedConfig['tools'] = ['run_query']): ResolvedConfig {
   return {
-    configPath: '/test/config.yaml',
+    mode: 'readonly',
+    apiKey: 'readonly-key',
+    apiKeyHash: 'readonly-hash',
+    callerLabel: 'readonly',
+    dbLabel: 'readonly-db',
+    connectionString: 'DATABASE=SAMPLE;',
+    tools,
+    procedureAllowlist: [],
     server: {
       host: '127.0.0.1',
-      port: 3000,
-      readinessAuthRequired: true
+      port: 3000
     },
     limits: {
       maxRows: 1000,
       defaultPreviewRows: 50,
       queryTimeoutMs: 30000,
       metadataTimeoutMs: 15000,
-      requestBodyBytes: 1024 * 1024
+      requestBodyBytes: 1048576
     },
-    descriptorFiles: [],
-    profiles: {
-      [profile.id]: profile
-    }
+    descriptorFiles: []
   };
 }
 
-function createProfile(
-  tools: ResolvedProfileConfig['tools'],
-  overrides: Partial<ResolvedProfileConfig> = {}
-): ResolvedProfileConfig {
-  const baseProfile: ResolvedProfileConfig = {
-    id: 'readonly',
-    enabled: true,
-    mode: 'readonly',
-    apiKeyEnv: 'READONLY_KEY',
-    apiKey: 'readonly-key',
-    apiKeyHash: 'readonly-hash',
-    callerLabel: 'readonly',
-    db: {
-      connectionStringEnv: 'READONLY_DB',
-      connectionString: 'DATABASE=SAMPLE;',
-      targetLabel: 'readonly-db'
-    },
-    tools,
-    procedureAllowlist: []
-  };
-
+function createFullConfig(tools: ResolvedConfig['tools']): ResolvedConfig {
   return {
-    ...baseProfile,
-    ...overrides,
-    db: {
-      ...baseProfile.db,
-      ...(overrides.db ?? {})
-    }
+    mode: 'full',
+    apiKey: 'full-key',
+    apiKeyHash: 'full-hash',
+    callerLabel: 'full',
+    dbLabel: 'full-db',
+    connectionString: 'DATABASE=SAMPLE;',
+    tools,
+    procedureAllowlist: [],
+    server: {
+      host: '127.0.0.1',
+      port: 3000
+    },
+    limits: {
+      maxRows: 1000,
+      defaultPreviewRows: 50,
+      queryTimeoutMs: 30000,
+      metadataTimeoutMs: 15000,
+      requestBodyBytes: 1048576
+    },
+    descriptorFiles: []
   };
 }
 
-async function connectTestServer(profile: ResolvedProfileConfig, factory: Db2ClientFactory): Promise<ConnectedTestServer> {
-  const config = createConfig(profile);
+async function connectTestServer(config: ResolvedConfig, factory: Db2ClientFactory): Promise<ConnectedTestServer> {
   const auditLogger = new MemoryAuditLogger();
   const server = createMcpServer({
     config,
-    profile,
     descriptorCatalog: DescriptorCatalog.empty(),
     db2ClientFactory: factory,
     auditLogger,
-    requestContext: createRequestContext(profile, 'POST', '/mcp')
+    requestContext: createRequestContext(config, 'POST', '/mcp')
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({
@@ -179,9 +174,9 @@ afterEach(async () => {
 });
 
 describe('MCP server integration', () => {
-  it('lists only tools enabled for the current profile', async () => {
+  it('lists only tools enabled for the current config', async () => {
     const connected = await connectTestServer(
-      createProfile(['run_query']),
+      createReadonlyConfig(['run_query']),
       new FakeDb2ClientFactory(() => new FakeDb2Client(async () => ({
         columns: [],
         rows: [],
@@ -198,7 +193,7 @@ describe('MCP server integration', () => {
 
   it('emits success audit events for successful tool calls', async () => {
     const connected = await connectTestServer(
-      createProfile(['run_query']),
+      createReadonlyConfig(['run_query']),
       new FakeDb2ClientFactory(() => new FakeDb2Client(async () => ({
         columns: ['ID'],
         rows: [{ ID: 1 }, { ID: 2 }],
@@ -221,7 +216,7 @@ describe('MCP server integration', () => {
 
   it('emits denied audit events for blocked read-only violations', async () => {
     const connected = await connectTestServer(
-      createProfile(['run_query']),
+      createReadonlyConfig(['run_query']),
       new FakeDb2ClientFactory(() => new FakeDb2Client(async () => ({
         columns: [],
         rows: [],
@@ -245,7 +240,7 @@ describe('MCP server integration', () => {
 
   it('emits error audit events when the DB layer fails', async () => {
     const connected = await connectTestServer(
-      createProfile(['run_query']),
+      createReadonlyConfig(['run_query']),
       new FakeDb2ClientFactory(() => new FakeDb2Client(async () => {
         throw new Error('DB down');
       }))
@@ -264,24 +259,9 @@ describe('MCP server integration', () => {
     expect(connected.auditLogger.events[0]?.errorCode).toBe('DB_EXECUTION_FAILED');
   });
 
-  it('lists explicit full-mode DDL tools when enabled for the current profile', async () => {
+  it('lists explicit full-mode DDL tools when enabled for the current config', async () => {
     const connected = await connectTestServer(
-      createProfile(
-        ['run_ddl', 'deploy_procedure', 'drop_procedure', 'deploy_function', 'drop_function', 'deploy_view', 'drop_view'],
-        {
-          id: 'full',
-          mode: 'full',
-          apiKeyEnv: 'FULL_KEY',
-          apiKey: 'full-key',
-          apiKeyHash: 'full-hash',
-          callerLabel: 'full',
-          db: {
-            connectionStringEnv: 'FULL_DB',
-            connectionString: 'DATABASE=SAMPLE;',
-            targetLabel: 'full-db'
-          }
-        }
-      ),
+      createFullConfig(['run_ddl', 'deploy_procedure', 'drop_procedure', 'deploy_function', 'drop_function', 'deploy_view', 'drop_view']),
       new FakeDb2ClientFactory(() => new FakeDb2Client(async () => ({
         columns: [],
         rows: [],
@@ -307,22 +287,7 @@ describe('MCP server integration', () => {
   it('deploys and drops procedures, functions, and views in full mode', async () => {
     const executedStatements: string[] = [];
     const connected = await connectTestServer(
-      createProfile(
-        ['run_ddl', 'deploy_procedure', 'drop_procedure', 'deploy_function', 'drop_function', 'deploy_view', 'drop_view'],
-        {
-          id: 'full',
-          mode: 'full',
-          apiKeyEnv: 'FULL_KEY',
-          apiKey: 'full-key',
-          apiKeyHash: 'full-hash',
-          callerLabel: 'full',
-          db: {
-            connectionStringEnv: 'FULL_DB',
-            connectionString: 'DATABASE=SAMPLE;',
-            targetLabel: 'full-db'
-          }
-        }
-      ),
+      createFullConfig(['run_ddl', 'deploy_procedure', 'drop_procedure', 'deploy_function', 'drop_function', 'deploy_view', 'drop_view']),
       new FakeDb2ClientFactory(() => new FakeDb2Client(async (sql) => {
         executedStatements.push(sql);
 
@@ -410,19 +375,7 @@ describe('MCP server integration', () => {
 
   it('rejects deploy SQL that does not match the requested full-mode target', async () => {
     const connected = await connectTestServer(
-      createProfile(['deploy_procedure'], {
-        id: 'full',
-        mode: 'full',
-        apiKeyEnv: 'FULL_KEY',
-        apiKey: 'full-key',
-        apiKeyHash: 'full-hash',
-        callerLabel: 'full',
-        db: {
-          connectionStringEnv: 'FULL_DB',
-          connectionString: 'DATABASE=SAMPLE;',
-          targetLabel: 'full-db'
-        }
-      }),
+      createFullConfig(['deploy_procedure']),
       new FakeDb2ClientFactory(() => new FakeDb2Client(async () => ({
         columns: [],
         rows: [],
@@ -448,19 +401,7 @@ describe('MCP server integration', () => {
 
   it('rejects non-DDL statements in run_ddl', async () => {
     const connected = await connectTestServer(
-      createProfile(['run_ddl'], {
-        id: 'full',
-        mode: 'full',
-        apiKeyEnv: 'FULL_KEY',
-        apiKey: 'full-key',
-        apiKeyHash: 'full-hash',
-        callerLabel: 'full',
-        db: {
-          connectionStringEnv: 'FULL_DB',
-          connectionString: 'DATABASE=SAMPLE;',
-          targetLabel: 'full-db'
-        }
-      }),
+      createFullConfig(['run_ddl']),
       new FakeDb2ClientFactory(() => new FakeDb2Client(async () => ({
         columns: [],
         rows: [],
@@ -484,20 +425,7 @@ describe('MCP server integration', () => {
 
   it('allows full mode to call procedures without checking the allowlist', async () => {
     const connected = await connectTestServer(
-      createProfile(['call_procedure'], {
-        id: 'full',
-        mode: 'full',
-        apiKeyEnv: 'FULL_KEY',
-        apiKey: 'full-key',
-        apiKeyHash: 'full-hash',
-        callerLabel: 'full',
-        db: {
-          connectionStringEnv: 'FULL_DB',
-          connectionString: 'DATABASE=SAMPLE;',
-          targetLabel: 'full-db'
-        },
-        procedureAllowlist: []
-      }),
+      createFullConfig(['call_procedure']),
       new FakeDb2ClientFactory(() => new FakeDb2Client(
         async () => ({
           columns: [],

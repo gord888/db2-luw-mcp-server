@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - single-mode-config
   pull_request:
     branches:
       - main

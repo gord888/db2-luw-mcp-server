@@ -29,93 +29,44 @@ export const FULL_DDL_TOOL_NAMES = [
   'drop_view'
 ] as const;
 
-export const FUTURE_TOOL_NAMES = [
-  'insert_rows',
-  'update_rows',
-  'delete_rows',
-  'upsert_rows',
-  'run_sql_mutation',
-  'execute_action',
-  'collect_diagnostics'
-] as const;
-
 export const IMPLEMENTED_TOOL_NAMES = [
   ...READONLY_TOOL_NAMES,
   ...PROCEDURE_TOOL_NAMES,
   ...FULL_DDL_TOOL_NAMES
 ] as const;
 
-export const TOOL_NAMES = [
-  ...IMPLEMENTED_TOOL_NAMES,
-  ...FUTURE_TOOL_NAMES
-] as const;
-
-export type ToolName = typeof TOOL_NAMES[number];
+export type ToolName = typeof IMPLEMENTED_TOOL_NAMES[number];
 export type ImplementedToolName = typeof IMPLEMENTED_TOOL_NAMES[number];
 export type AccessMode = 'readonly' | 'readonly_procedures' | 'full';
+
+const MODE_TOOL_MAP: Record<AccessMode, ToolName[]> = {
+  readonly: [...READONLY_TOOL_NAMES],
+  readonly_procedures: [...READONLY_TOOL_NAMES, ...PROCEDURE_TOOL_NAMES],
+  full: [...READONLY_TOOL_NAMES, ...PROCEDURE_TOOL_NAMES, ...FULL_DDL_TOOL_NAMES]
+};
+
+export function getToolsForMode(mode: AccessMode): ToolName[] {
+  return MODE_TOOL_MAP[mode];
+}
 
 export interface ProcedureAllowlistEntry {
   schema: string;
   name: string;
 }
 
-export interface RawProfileConfig {
-  enabled?: boolean;
+export interface ResolvedConfig {
   mode: AccessMode;
-  apiKeyEnv: string;
-  callerLabel?: string;
-  db: {
-    connectionStringEnv: string;
-    targetLabel?: string;
-  };
-  tools: ToolName[];
-  procedureAllowlist?: ProcedureAllowlistEntry[];
-}
-
-export interface RawConfig {
-  server: {
-    host: string;
-    port: number;
-    publicBaseUrl?: string;
-    readinessAuthRequired?: boolean;
-  };
-  limits: {
-    maxRows: number;
-    defaultPreviewRows: number;
-    queryTimeoutMs: number;
-    metadataTimeoutMs: number;
-    requestBodyBytes?: number;
-  };
-  descriptors?: {
-    files?: string[];
-  };
-  profiles: Record<string, RawProfileConfig>;
-}
-
-export interface ResolvedProfileConfig {
-  id: string;
-  enabled: boolean;
-  mode: AccessMode;
-  apiKeyEnv: string;
   apiKey: string;
   apiKeyHash: string;
-  callerLabel?: string;
-  db: {
-    connectionStringEnv: string;
-    connectionString: string;
-    targetLabel: string;
-  };
+  callerLabel: string;
+  dbLabel: string;
+  connectionString: string;
   tools: ToolName[];
   procedureAllowlist: ProcedureAllowlistEntry[];
-}
-
-export interface ResolvedConfig {
-  configPath: string;
   server: {
     host: string;
     port: number;
     publicBaseUrl?: string;
-    readinessAuthRequired: boolean;
   };
   limits: {
     maxRows: number;
@@ -125,5 +76,4 @@ export interface ResolvedConfig {
     requestBodyBytes: number;
   };
   descriptorFiles: string[];
-  profiles: Record<string, ResolvedProfileConfig>;
 }

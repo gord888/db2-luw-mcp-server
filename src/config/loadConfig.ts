@@ -1,118 +1,112 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import yaml from 'yaml';
 
 import { AppError } from '../errors/AppError.js';
-import { ensureImplementedTools, validateRawConfig } from './validateConfig.js';
-import type { ResolvedConfig, ResolvedProfileConfig } from './types.js';
+import { parseProcedureAllowlist } from './validateConfig.js';
+import { type AccessMode, type ResolvedConfig, getToolsForMode } from './types.js';
 
 function hashSecret(secret: string): string {
   return createHash('sha256').update(secret).digest('hex');
 }
 
-interface ResolveEnvOptions {
-  required?: boolean;
-  fallback?: string;
-}
-
-export interface LoadConfigOptions {
-  requireApiKeys?: boolean;
-}
-
-function resolveEnv(name: string, context: string, options: ResolveEnvOptions = {}): string {
+function requiredEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
-    if (options.required === false) {
-      return options.fallback ?? '';
-    }
-
-    throw new AppError('CONFIG_INVALID', `${context} references missing environment variable ${name}.`, 500);
+    throw new AppError('CONFIG_INVALID', `Required environment variable ${name} is not set.`, 500);
   }
-
   return value;
 }
 
-export async function loadConfig(configPath: string, options: LoadConfigOptions = {}): Promise<ResolvedConfig> {
-  const absolutePath = path.resolve(configPath);
-  const fileContent = await readFile(absolutePath, 'utf8');
-  const parsedYaml = yaml.parse(fileContent) as unknown;
-  const rawConfig = validateRawConfig(parsedYaml);
-  const apiKeyOwners = new Map<string, string>();
-  const resolvedProfiles: Record<string, ResolvedProfileConfig> = {};
-  const requireApiKeys = options.requireApiKeys ?? true;
-
-  for (const [profileId, profile] of Object.entries(rawConfig.profiles)) {
-    const enabled = profile.enabled ?? true;
-    const apiKey = resolveEnv(profile.apiKeyEnv, `Profile ${profileId}`, {
-      required: enabled && requireApiKeys,
-      fallback: `unused-api-key-${profileId}`
-    });
-    const connectionString = resolveEnv(profile.db.connectionStringEnv, `Profile ${profileId}`, {
-      required: enabled
-    });
-    const apiKeyHash = hashSecret(apiKey);
-
-    if (enabled) {
-      ensureImplementedTools(profileId, profile.tools);
-    }
-
-    const existingOwner = apiKeyOwners.get(apiKey);
-    if (enabled && existingOwner) {
-      throw new AppError(
-        'CONFIG_INVALID',
-        `Profiles ${existingOwner} and ${profileId} resolve to the same API key. API keys must map to exactly one profile.`,
-        500
-      );
-    }
-
-    if (enabled) {
-      apiKeyOwners.set(apiKey, profileId);
-    }
-
-    resolvedProfiles[profileId] = {
-      id: profileId,
-      enabled,
-      mode: profile.mode,
-      apiKeyEnv: profile.apiKeyEnv,
-      apiKey,
-      apiKeyHash,
-      callerLabel: profile.callerLabel,
-      db: {
-        connectionStringEnv: profile.db.connectionStringEnv,
-        connectionString,
-        targetLabel: profile.db.targetLabel ?? profileId
-      },
-      tools: profile.tools,
-      procedureAllowlist: profile.procedureAllowlist ?? []
-    };
-  }
-
-  return {
-    configPath: absolutePath,
-    server: {
-      host: rawConfig.server.host,
-      port: rawConfig.server.port,
-      publicBaseUrl: rawConfig.server.publicBaseUrl,
-      readinessAuthRequired: rawConfig.server.readinessAuthRequired ?? true
-    },
-    limits: {
-      maxRows: rawConfig.limits.maxRows,
-      defaultPreviewRows: rawConfig.limits.defaultPreviewRows,
-      queryTimeoutMs: rawConfig.limits.queryTimeoutMs,
-      metadataTimeoutMs: rawConfig.limits.metadataTimeoutMs,
-      requestBodyBytes: rawConfig.limits.requestBodyBytes ?? 1024 * 1024
-    },
-    descriptorFiles: (rawConfig.descriptors?.files ?? []).map((file) => path.resolve(path.dirname(absolutePath), file)),
-    profiles: resolvedProfiles
-  };
+function optionalEnv(name: string, fallback: string): string {
+  return process.env[name] || fallback;
 }
 
-export function resolveConfigPath(argv: string[]): string {
-  const configArgument = argv.find((value) => value.startsWith('--config='));
-  if (configArgument) {
-    return configArgument.replace('--config=', '');
+function parseMode(raw: string): AccessMode {
+  const validModes: AccessMode[] = ['readonly', 'readonly_procedures', 'full'];
+  if (!validModes.includes(raw as AccessMode)) {
+    throw new AppError(
+      'CONFIG_INVALID',
+      `DB2_MCP_MODE must be one of: ${validModes.join(', ')}. Got: ${raw}`,
+      500
+    );
+  }
+  return raw as AccessMode;
+}
+
+function parsePositiveInt(name: string, raw: string): number {
+  if (!/^\s*\d+\s*$/.test(raw)) {
+    throw new AppError('CONFIG_INVALID', `${name} must be a positive integer. Got: ${raw}`, 500);
+  }
+  return parseInt(raw, 10);
+}
+
+function buildConnectionString(): string {
+  const database = process.env.DB2_MCP_CONNECTION_STRING_DATABASE;
+  const hostname = process.env.DB2_MCP_CONNECTION_STRING_HOSTNAME;
+  const uid = process.env.DB2_MCP_CONNECTION_STRING_UID;
+  const pwd = process.env.DB2_MCP_CONNECTION_STRING_PWD;
+
+  const anyIndividual = database || hostname || uid || pwd;
+
+  if (anyIndividual) {
+    if (!database) {
+      throw new AppError('CONFIG_INVALID', 'DB2_MCP_CONNECTION_STRING_DATABASE is required when using individual connection env vars.', 500);
+    }
+    if (!hostname) {
+      throw new AppError('CONFIG_INVALID', 'DB2_MCP_CONNECTION_STRING_HOSTNAME is required when using individual connection env vars.', 500);
+    }
+    if (!uid) {
+      throw new AppError('CONFIG_INVALID', 'DB2_MCP_CONNECTION_STRING_UID is required when using individual connection env vars.', 500);
+    }
+    if (!pwd) {
+      throw new AppError('CONFIG_INVALID', 'DB2_MCP_CONNECTION_STRING_PWD is required when using individual connection env vars.', 500);
+    }
+
+    const port = optionalEnv('DB2_MCP_CONNECTION_STRING_PORT', '50000');
+    const protocol = optionalEnv('DB2_MCP_CONNECTION_STRING_PROTOCOL', 'TCPIP');
+
+    return `DATABASE=${database};HOSTNAME=${hostname};PORT=${port};PROTOCOL=${protocol};UID=${uid};PWD=${pwd};`;
   }
 
-  return process.env.DB2_MCP_CONFIG_PATH ?? path.resolve(process.cwd(), 'config', 'profiles.example.yaml');
+  return requiredEnv('DB2_MCP_CONNECTION_STRING');
+}
+
+export function loadConfig(): ResolvedConfig {
+  const mode = parseMode(requiredEnv('DB2_MCP_MODE'));
+  const apiKey = requiredEnv('DB2_MCP_API_KEY');
+  const connectionString = buildConnectionString();
+
+  const descriptorFilesRaw = optionalEnv('DB2_MCP_DESCRIPTOR_FILES', '');
+  const descriptorFiles = descriptorFilesRaw
+    ? descriptorFilesRaw.split(',').map((f) => path.resolve(f.trim()))
+    : [];
+
+  const procedureAllowlistRaw = optionalEnv('DB2_MCP_PROCEDURE_ALLOWLIST', '');
+  const procedureAllowlist = procedureAllowlistRaw
+    ? parseProcedureAllowlist(procedureAllowlistRaw)
+    : [];
+
+  return {
+    mode,
+    apiKey,
+    apiKeyHash: hashSecret(apiKey),
+    callerLabel: optionalEnv('DB2_MCP_CALLER_LABEL', mode),
+    dbLabel: optionalEnv('DB2_MCP_DB_LABEL', mode),
+    connectionString,
+    tools: getToolsForMode(mode),
+    procedureAllowlist,
+    server: {
+      host: optionalEnv('DB2_MCP_HOST', '0.0.0.0'),
+      port: parsePositiveInt('DB2_MCP_PORT', optionalEnv('DB2_MCP_PORT', '3000')),
+      publicBaseUrl: process.env.DB2_MCP_PUBLIC_BASE_URL || undefined
+    },
+    limits: {
+      maxRows: parsePositiveInt('DB2_MCP_MAX_ROWS', optionalEnv('DB2_MCP_MAX_ROWS', '1000')),
+      defaultPreviewRows: parsePositiveInt('DB2_MCP_DEFAULT_PREVIEW_ROWS', optionalEnv('DB2_MCP_DEFAULT_PREVIEW_ROWS', '50')),
+      queryTimeoutMs: parsePositiveInt('DB2_MCP_QUERY_TIMEOUT_MS', optionalEnv('DB2_MCP_QUERY_TIMEOUT_MS', '30000')),
+      metadataTimeoutMs: parsePositiveInt('DB2_MCP_METADATA_TIMEOUT_MS', optionalEnv('DB2_MCP_METADATA_TIMEOUT_MS', '15000')),
+      requestBodyBytes: parsePositiveInt('DB2_MCP_REQUEST_BODY_BYTES', optionalEnv('DB2_MCP_REQUEST_BODY_BYTES', '1048576'))
+    },
+    descriptorFiles
+  };
 }

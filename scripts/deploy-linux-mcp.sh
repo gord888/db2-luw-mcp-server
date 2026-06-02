@@ -7,7 +7,6 @@ INSTALL_DIR="${INSTALL_DIR:-/opt/db2-luw-mcp-server}"
 SERVICE_NAME="${SERVICE_NAME:-db2-luw-mcp-server}"
 SERVICE_USER="${SERVICE_USER:-db2mcp}"
 ENV_FILE="${ENV_FILE:-/etc/db2-luw-mcp-server.env}"
-CONFIG_TEMPLATE="${CONFIG_TEMPLATE:-profiles.readonly.yaml}"
 NODE_MAJOR="${NODE_MAJOR:-20}"
 
 log() {
@@ -77,11 +76,6 @@ fetch_source() {
     rm -rf "${INSTALL_DIR}"
     git clone --branch "${REPO_REF}" "${REPO_URL}" "${INSTALL_DIR}"
   fi
-
-  if [[ ! -f "${INSTALL_DIR}/config/${CONFIG_TEMPLATE}" ]]; then
-    echo "Config template ${CONFIG_TEMPLATE} was not found in ${INSTALL_DIR}/config." >&2
-    exit 1
-  fi
 }
 
 build_app() {
@@ -98,13 +92,16 @@ write_env_file() {
   touch "${ENV_FILE}"
   chmod 600 "${ENV_FILE}"
 
-  upsert_env "DB2_MCP_CONFIG_PATH" "${INSTALL_DIR}/config/${CONFIG_TEMPLATE}"
-  ensure_env_if_missing "DB2_MCP_API_KEY_READONLY" "replace-with-readonly-key"
-  ensure_env_if_missing "DB2_MCP_DB_READONLY" "DATABASE=SAMPLE;HOSTNAME=db2.internal;PORT=50000;PROTOCOL=TCPIP;UID=db2_mcp_ro;PWD=change-me;"
-  ensure_env_if_missing "DB2_MCP_API_KEY_READONLY_PROCEDURES" "replace-with-readonly-procedures-key"
-  ensure_env_if_missing "DB2_MCP_DB_READONLY_PROCEDURES" "DATABASE=SAMPLE;HOSTNAME=db2.internal;PORT=50000;PROTOCOL=TCPIP;UID=db2_mcp_ro_proc;PWD=change-me;"
-  ensure_env_if_missing "DB2_MCP_API_KEY_FULL" "replace-with-full-key"
-  ensure_env_if_missing "DB2_MCP_DB_FULL" "DATABASE=SAMPLE;HOSTNAME=db2.internal;PORT=50000;PROTOCOL=TCPIP;UID=db2_mcp_full;PWD=change-me;"
+  upsert_env "DB2_MCP_MODE" "${DB2_MCP_MODE:-readonly}"
+  ensure_env_if_missing "DB2_MCP_API_KEY" "replace-with-your-api-key"
+  ensure_env_if_missing "DB2_MCP_CONNECTION_STRING" "DATABASE=SAMPLE;HOSTNAME=db2.internal;PORT=50000;PROTOCOL=TCPIP;UID=db2_mcp;PWD=change-me;"
+  # Individual connection vars (preferred — avoids Proxmox UI semicolon/equals bugs)
+  ensure_env_if_missing "DB2_MCP_CONNECTION_STRING_DATABASE" "SAMPLE"
+  ensure_env_if_missing "DB2_MCP_CONNECTION_STRING_HOSTNAME" "db2.internal"
+  ensure_env_if_missing "DB2_MCP_CONNECTION_STRING_PORT" "50000"
+  ensure_env_if_missing "DB2_MCP_CONNECTION_STRING_PROTOCOL" "TCPIP"
+  ensure_env_if_missing "DB2_MCP_CONNECTION_STRING_UID" "db2_mcp"
+  ensure_env_if_missing "DB2_MCP_CONNECTION_STRING_PWD" "change-me"
   ensure_env_if_missing "LOG_LEVEL" "info"
 }
 
@@ -148,12 +145,9 @@ Paths:
   Runtime env file: ${ENV_FILE}
   Systemd unit    : /etc/systemd/system/${SERVICE_NAME}.service
 
-Config template in use:
-  ${INSTALL_DIR}/config/${CONFIG_TEMPLATE}
-
 Next steps:
-  1. Edit ${ENV_FILE} and replace the placeholder DB2 connection strings and API keys.
-  2. If needed, edit the YAML config under ${INSTALL_DIR}/config to enable the desired profile mode.
+  1. Edit ${ENV_FILE} and replace the placeholder connection string and API key.
+  2. Set DB2_MCP_MODE to readonly, readonly_procedures, or full depending on needs.
   3. Restart the service:
        systemctl restart ${SERVICE_NAME}
   4. Verify deployment:
