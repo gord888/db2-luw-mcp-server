@@ -8,6 +8,16 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      stability:
+        description: 'Stability label for this build'
+        required: false
+        default: ''
+        type: choice
+        options:
+          - ''
+          - stable
+          - unstable
 
 permissions:
   contents: read
@@ -166,6 +176,12 @@ jobs:
           docker tag "${IMAGE_REF}" "${STABLE_REF}"
           docker push "${IMAGE_REF}"
           docker push "${STABLE_REF}"
+          if [[ -n "${{ github.event.inputs.stability }}" ]]; then
+            STABILITY_REF="${LOGIN_SERVER}/${IMAGE_REPO}:${{ github.event.inputs.stability }}"
+            docker tag "${IMAGE_REF}" "${STABILITY_REF}"
+            docker push "${STABILITY_REF}"
+            echo "Pushed stability tag: ${{ github.event.inputs.stability }}"
+          fi
 
       - name: Logout from container registry
         if: always()
