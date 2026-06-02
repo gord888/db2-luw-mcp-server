@@ -221,18 +221,30 @@ export function renderStatusPage(summary: ServiceHealthSummary): string {
     return `<tr>
       <td>${escapeHtml(mode.id)}</td>
       <td>${escapeHtml(mode.mode)}</td>
-      <td>Not enabled</td>
-      <td>${mode.tools.map((tool) => escapeHtml(tool)).join(', ')}</td>
+      <td><span class="badge badge-skipped">Not enabled</span></td>
+      <td>${mode.tools.map((tool) => '<code>' + escapeHtml(tool) + '</code>').join(', ')}</td>
     </tr>`;
   }).join('');
 
   const checksHtml = summary.checks.map((check) => {
     const statusEmoji = check.status === 'ok' ? '✅' : check.status === 'error' ? '❌' : '⏭️';
+    const detailParts: string[] = [];
+    if (check.command) {
+      detailParts.push(`<code>${escapeHtml(check.command)}</code>`);
+    }
+    if (check.detail) {
+      detailParts.push(escapeHtml(check.detail));
+    }
+    if (check.skippedReason) {
+      detailParts.push(escapeHtml(check.skippedReason));
+    }
+    if (check.error) {
+      detailParts.push('Error: ' + escapeHtml(check.error.message));
+    }
     return `<tr>
       <td>${escapeHtml(check.label)}</td>
-      <td><code>${escapeHtml(check.command)}</code></td>
+      <td class="detail-cell">${detailParts.join('<br>')}</td>
       <td>${statusEmoji} ${escapeHtml(check.status)}</td>
-      <td>${check.detail ? escapeHtml(check.detail) : ''}${check.skippedReason ? escapeHtml(check.skippedReason) : ''}${check.error ? 'Error: ' + escapeHtml(check.error.message) : ''}</td>
     </tr>`;
   }).join('');
 
@@ -242,69 +254,163 @@ export function renderStatusPage(summary: ServiceHealthSummary): string {
   <meta charset="utf-8" />
   <title>DB2 LUW MCP Status</title>
   <style>
-    body { font-family: system-ui, sans-serif; margin: 2rem; background: #f5f5f5; }
-    h1 { color: #333; }
-    h2 { color: #555; border-bottom: 1px solid #ccc; padding-bottom: 0.25rem; }
-    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
-    th, td { border: 1px solid #ddd; padding: 0.5rem; text-align: left; }
-    th { background: #eee; }
-    code { background: #e8e8e8; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.9em; }
-    .status-ok { color: green; font-weight: bold; }
-    .status-degraded { color: orange; font-weight: bold; }
-    .note { background: #fff3cd; border: 1px solid #ffc107; padding: 0.5rem 1rem; margin: 0.5rem 0; border-radius: 4px; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f0f2f5; color: #1a1a2e; line-height: 1.6; }
+    .container { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+    header { background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%); color: #fff; border-radius: 10px; padding: 1.5rem 2rem; margin-bottom: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+    header h1 { font-size: 1.5rem; font-weight: 700; }
+    header .subtitle { font-size: 0.85rem; opacity: 0.85; margin-top: 0.25rem; }
+    header .status-pill { display: inline-block; padding: 0.2rem 0.75rem; border-radius: 20px; font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; margin-top: 0.5rem; }
+    .status-pill-ok { background: #16a34a; }
+    .status-pill-degraded { background: #ea580c; }
+    nav { margin-top: 0.75rem; }
+    nav a { color: rgba(255,255,255,0.85); text-decoration: none; font-size: 0.85rem; font-weight: 500; margin-right: 1.25rem; }
+    nav a:hover { color: #fff; text-decoration: underline; }
+    .card { background: #fff; border-radius: 8px; padding: 1.5rem; margin-bottom: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border: 1px solid #e5e7eb; }
+    .card h2 { font-size: 1.1rem; color: #1e3a5f; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 2px solid #e5e7eb; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    thead th { text-align: left; background: #f8fafc; color: #475569; font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.6rem 0.75rem; border-bottom: 2px solid #e2e8f0; }
+    tbody td { padding: 0.55rem 0.75rem; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: #f8fafc; }
+    code { background: #eef2ff; color: #4338ca; padding: 0.1rem 0.35rem; border-radius: 3px; font-size: 0.85em; font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; }
+    pre { background: #1e293b; color: #e2e8f0; padding: 1rem 1.25rem; border-radius: 6px; overflow-x: auto; font-size: 0.8rem; line-height: 1.5; margin: 0.5rem 0; }
+    pre code { background: none; color: inherit; padding: 0; font-size: inherit; }
+    .status-ok { color: #16a34a; font-weight: 600; }
+    .status-error { color: #dc2626; font-weight: 600; }
+    .note { background: #fffbeb; border: 1px solid #fcd34d; padding: 0.6rem 1rem; margin: 0.5rem 0; border-radius: 6px; font-size: 0.88rem; line-height: 1.5; }
+    .kv-table th { width: 180px; white-space: nowrap; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
+    @media (max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } .container { padding: 0.75rem; } }
+    .detail-cell { font-size: 0.82rem; }
+    .detail-cell code { display: block; margin-bottom: 0.25rem; }
+    .detail-text { color: #64748b; font-size: 0.82rem; }
+    .badge { display: inline-block; padding: 0.12rem 0.45rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+    .badge-ok { background: #dcfce7; color: #166534; }
+    .badge-error { background: #fef2f2; color: #991b1b; }
+    .badge-skipped { background: #f1f5f9; color: #64748b; }
   </style>
 </head>
 <body>
-  <h1>DB2 LUW MCP Status</h1>
-  <p>Checked at: ${escapeHtml(summary.checkedAt)}</p>
-  <p>Status: <span class="${summary.status === 'ok' ? 'status-ok' : 'status-degraded'}">${escapeHtml(summary.status.toUpperCase())}</span></p>
+  <div class="container">
+    <header>
+      <h1>DB2 LUW MCP Server</h1>
+      <div class="subtitle">Checked at ${escapeHtml(summary.checkedAt)}</div>
+      <div class="status-pill ${summary.status === 'ok' ? 'status-pill-ok' : 'status-pill-degraded'}">${escapeHtml(summary.status.toUpperCase())}</div>
+      <nav>
+        <a href="/status">Status</a>
+        <a href="/descriptors">Descriptors</a>
+        <a href="/healthz">Health JSON</a>
+      </nav>
+    </header>
 
-  <h2>Active Profile</h2>
-  <table>
-    <tr><th>Mode</th><td>${escapeHtml(summary.mode)}</td></tr>
-    <tr><th>Caller Label</th><td>${escapeHtml(summary.callerLabel)}</td></tr>
-    <tr><th>DB Target Label</th><td>${escapeHtml(summary.dbLabel)}</td></tr>
-    <tr><th>Tools Enabled (${summary.toolCount})</th><td>${summary.tools.map((tool) => escapeHtml(tool)).join(', ')}</td></tr>
-    <tr><th>Public Base URL</th><td>${summary.publicBaseUrl ? escapeHtml(summary.publicBaseUrl) : '<em>Not configured</em>'}</td></tr>
-    <tr><th>Working Directory</th><td><code>${escapeHtml(summary.fileLocations.workingDirectory)}</code></td></tr>
-  </table>
+    <div class="grid-2">
+      <div class="card">
+        <h2>Active Profile</h2>
+        <table class="kv-table">
+          <tbody>
+            <tr><th>Mode</th><td>${escapeHtml(summary.mode)}</td></tr>
+            <tr><th>Caller Label</th><td>${escapeHtml(summary.callerLabel)}</td></tr>
+            <tr><th>DB Target Label</th><td>${escapeHtml(summary.dbLabel)}</td></tr>
+            <tr><th>Tools Enabled</th><td><span class="badge badge-ok">${summary.toolCount}</span> ${summary.tools.map((tool) => '<code>' + escapeHtml(tool) + '</code>').join(', ')}</td></tr>
+            <tr><th>Public Base URL</th><td>${summary.publicBaseUrl ? '<code>' + escapeHtml(summary.publicBaseUrl) + '</code>' : '<em>Not configured</em>'}</td></tr>
+            <tr><th>Working Directory</th><td><code>${escapeHtml(summary.fileLocations.workingDirectory)}</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2>File Locations</h2>
+        <table class="kv-table">
+          <tbody>
+            <tr><th>Runtime Env File</th><td><code>${escapeHtml(summary.fileLocations.runtimeEnvFile)}</code></td></tr>
+            <tr><th>Systemd Unit</th><td><code>${escapeHtml(summary.fileLocations.systemdUnit)}</code></td></tr>
+            <tr><th>Service Name</th><td><code>${escapeHtml(summary.fileLocations.serviceName)}</code></td></tr>
+            <tr><th>Descriptor Files</th><td>${summary.fileLocations.descriptorFiles.length > 0 ? summary.fileLocations.descriptorFiles.map((f) => '<code>' + escapeHtml(f) + '</code>').join('<br>') : '<em>None configured</em>'}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
 
-  <h2>Health Checks</h2>
-  <table>
-    <tr><th>Check</th><th>Status</th><th>Detail</th></tr>
-    <tr>
-      <td>Basic Select Probe</td>
-      <td>${summary.basicSelect.status === 'ok' ? '✅ ok' : '❌ error'}</td>
-      <td>${summary.basicSelect.currentTimestamp ? 'Timestamp: ' + escapeHtml(summary.basicSelect.currentTimestamp) : ''}${summary.basicSelect.error ? 'Error: ' + escapeHtml(summary.basicSelect.error.message) : ''}</td>
-    </tr>
-    ${checksHtml}
-  </table>
+  <div class="card">
+    <h2>Health Checks</h2>
+    <table>
+      <thead>
+        <tr><th>Check</th><th>Detail</th><th style="width:130px;">Status</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Basic Select Probe</td>
+          <td class="detail-cell"><code>${escapeHtml(summary.basicSelect.sql)}</code></td>
+          <td>${summary.basicSelect.status === 'ok'
+            ? '<span class="status-ok">✅ OK</span>' + (summary.basicSelect.currentTimestamp ? '<div class="detail-text">' + escapeHtml(summary.basicSelect.currentTimestamp) + '</div>' : '')
+            : '<span class="status-error">❌ Error</span>' + (summary.basicSelect.error ? '<div class="detail-text">' + escapeHtml(summary.basicSelect.error.message) + '</div>' : '')}</td>
+        </tr>
+        ${checksHtml}
+      </tbody>
+    </table>
+  </div>
 
-  <h2>Procedure Allowlist</h2>
-  <ul>${procedureAllowlistHtml}</ul>
+  <div class="card">
+    <h2>Service Endpoints</h2>
+    <table>
+      <thead>
+        <tr><th>Endpoint</th><th style="width:160px;">Method</th><th>URL</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>MCP Protocol</td><td>GET, POST, DELETE</td><td>${summary.publicBaseUrl ? '<code>' + escapeHtml(summary.publicBaseUrl) + '/mcp</code>' : '<code>/mcp</code>'}</td></tr>
+        <tr><td>Status Page</td><td>GET</td><td>${summary.publicBaseUrl ? '<code>' + escapeHtml(summary.publicBaseUrl) + '/status</code>' : '<code>/status</code>'}</td></tr>
+        <tr><td>Descriptor Manager</td><td>GET</td><td>${summary.publicBaseUrl ? '<code>' + escapeHtml(summary.publicBaseUrl) + '/descriptors</code>' : '<code>/descriptors</code>'}</td></tr>
+        <tr><td>Health Check</td><td>GET</td><td>${summary.publicBaseUrl ? '<code>' + escapeHtml(summary.publicBaseUrl) + '/healthz</code>' : '<code>/healthz</code>'}</td></tr>
+        <tr><td>Readiness Check</td><td>GET</td><td>${summary.publicBaseUrl ? '<code>' + escapeHtml(summary.publicBaseUrl) + '/readyz</code>' : '<code>/readyz</code>'}</td></tr>
+      </tbody>
+    </table>
+  </div>
 
-  <h2>Other Deployment Modes</h2>
-  <p>Set <code>DB2_MCP_MODE</code> to one of these values at deploy time:</p>
-  <table>
-    <tr><th>Profile</th><th>Mode</th><th>Status</th><th>Tools</th></tr>
-    <tr>
-      <td>${escapeHtml(summary.mode)}</td>
-      <td>${escapeHtml(summary.mode)}</td>
-      <td><strong>Active</strong></td>
-      <td>${summary.tools.map((tool) => escapeHtml(tool)).join(', ')}</td>
-    </tr>
-    ${otherModesHtml}
-  </table>
+  <div class="card">
+    <h2>Example MCP Client Config</h2>
+    <p style="margin-bottom:0.5rem;color:#64748b;font-size:0.88rem;">Use this in your <code>.mcp.json</code> or client config to connect:</p>
+    <pre><code>${escapeHtml(JSON.stringify({
+      mcpServers: {
+        'db2-luw': {
+          type: 'stdio',
+          command: 'npx',
+          args: [
+            '-y', 'mcp-remote',
+            (summary.publicBaseUrl ?? 'http://&lt;host&gt;:3000') + '/mcp',
+            '--allow-http',
+            '--header', 'Authorization:${DB2_LUW_AUTH}'
+          ],
+          env: { DB2_LUW_AUTH: 'Bearer &lt;api-key&gt;' },
+          tools: ['*']
+        }
+      }
+    }, null, 2))}</code></pre>
+  </div>
 
-  <h2>File Locations</h2>
-  <table>
-    <tr><th>Runtime Env File</th><td><code>${escapeHtml(summary.fileLocations.runtimeEnvFile)}</code></td></tr>
-    <tr><th>Systemd Unit</th><td><code>${escapeHtml(summary.fileLocations.systemdUnit)}</code></td></tr>
-    <tr><th>Service Name</th><td><code>${escapeHtml(summary.fileLocations.serviceName)}</code></td></tr>
-    <tr><th>Descriptor Files</th><td>${summary.fileLocations.descriptorFiles.length > 0 ? summary.fileLocations.descriptorFiles.map((f) => '<code>' + escapeHtml(f) + '</code>').join('<br>') : '<em>None configured</em>'}</td></tr>
-  </table>
+  <div class="card">
+    <h2>Procedure Allowlist</h2>
+    <ul>${procedureAllowlistHtml}</ul>
+  </div>
 
-  ${summary.notes.length > 0 ? '<h2>Notes</h2>' + summary.notes.map((note) => '<div class="note">' + escapeHtml(note) + '</div>').join('') : ''}
+  <div class="card">
+    <h2>Other Deployment Modes</h2>
+    <p style="margin-bottom:0.75rem;color:#64748b;font-size:0.88rem;">Set <code>DB2_MCP_MODE</code> to one of these values at deploy time:</p>
+    <table>
+      <thead><tr><th>Profile</th><th>Mode</th><th>Status</th><th>Tools</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>${escapeHtml(summary.mode)}</td>
+          <td>${escapeHtml(summary.mode)}</td>
+          <td><span class="badge badge-ok">Active</span></td>
+          <td>${summary.tools.map((tool) => '<code>' + escapeHtml(tool) + '</code>').join(', ')}</td>
+        </tr>
+        ${otherModesHtml}
+      </tbody>
+    </table>
+  </div>
+
+  ${summary.notes.length > 0 ? '<div class="card"><h2>Notes</h2>' + summary.notes.map((note) => '<div class="note">' + escapeHtml(note) + '</div>').join('') + '</div>' : ''}
+</div>
 </body>
 </html>`;
 }
