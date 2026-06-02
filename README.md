@@ -4,7 +4,7 @@ Standalone internal MCP server for IBM DB2 LUW. Single-mode, env-var-driven, and
 
 ## WARNINGS
 
-:warning: This is still in ALPHA! I am running this locally on a Proxmox server using an OCI deployment and leveraging GitHub Copilot CLI to test. Expect more updates as I find bugs or need new features. Feel free to add features and bug fixes via PRs.
+:warning: This is still in ALPHA! I am running this locally on a Proxmox server - pull from OCI repo, deploy as LXC with template - Set the environment variables. Expect more updates as I find bugs or need new features. Feel free to add features and bug fixes via PRs.
 
 :warning: This was purely vibe coded.
 
