@@ -58,6 +58,9 @@ One container, one mode. All tools for that mode are derived automatically. No Y
 | `DB2_MCP_CONNECTION_STRING_PROTOCOL` | No | `TCPIP` | DB2 protocol |
 
 ¹ Use EITHER `DB2_MCP_CONNECTION_STRING` OR the individual vars. Individual vars take precedence and are recommended for Proxmox deployments to avoid semicolon/equals issues in the Proxmox UI.
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
 | `DB2_MCP_HOST` | No | `0.0.0.0` | Listen address |
 | `DB2_MCP_PORT` | No | `3000` | Listen port |
 | `DB2_MCP_PUBLIC_BASE_URL` | No | — | Public URL for SSE endpoint |
