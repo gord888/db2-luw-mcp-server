@@ -7,6 +7,17 @@ import { createHttpServer } from './server/httpServer.js';
 async function main(): Promise<void> {
   const logger = createLogger();
   const config = loadConfig();
+
+  if (config.configErrors.length > 0) {
+    logger.warn({
+      eventType: 'config_errors',
+      errors: config.configErrors
+    }, 'Server starting with configuration errors — health checks will show degraded status.');
+    for (const err of config.configErrors) {
+      logger.warn({ variable: err.variable }, err.message);
+    }
+  }
+
   const descriptorCatalog = await loadDescriptorCatalog(config.descriptorFiles);
   const server = createHttpServer({
     config,

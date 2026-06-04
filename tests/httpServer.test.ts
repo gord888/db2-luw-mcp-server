@@ -97,6 +97,7 @@ function createConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
       requestBodyBytes: 1048576
     },
     descriptorFiles: [],
+    configErrors: [],
     ...overrides
   };
 }

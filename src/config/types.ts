@@ -49,6 +49,11 @@ export function getToolsForMode(mode: AccessMode): ToolName[] {
   return MODE_TOOL_MAP[mode];
 }
 
+export interface ConfigError {
+  variable: string;
+  message: string;
+}
+
 export interface ProcedureAllowlistEntry {
   schema: string;
   name: string;
@@ -76,4 +81,5 @@ export interface ResolvedConfig {
     requestBodyBytes: number;
   };
   descriptorFiles: string[];
+  configErrors: ConfigError[];
 }

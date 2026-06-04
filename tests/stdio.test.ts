@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { loadConfig } from '../src/config/loadConfig.js';
-import { AppError } from '../src/errors/AppError.js';
 
 const trackedEnv = [
   'DB2_MCP_MODE',
@@ -57,10 +56,14 @@ describe('stdio config resolution', () => {
     expect(config.tools).not.toContain('run_ddl');
   });
 
-  it('throws when mode env var is not set', () => {
+  it('returns config errors when mode env var is not set', () => {
     process.env.DB2_MCP_API_KEY = 'key';
     process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=SAMPLE;';
 
-    expect(() => loadConfig()).toThrowError(AppError);
+    const config = loadConfig();
+
+    expect(config.configErrors).not.toHaveLength(0);
+    expect(config.configErrors.some((e) => e.variable === 'DB2_MCP_MODE')).toBe(true);
+    expect(config.mode).toBe('readonly');
   });
 });

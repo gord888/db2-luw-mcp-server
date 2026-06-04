@@ -48,6 +48,8 @@ export interface ServiceHealthSummary {
   toolCount: number;
   procedureAllowlist: string[];
   publicBaseUrl?: string;
+  configErrors: Array<{ variable: string; message: string }>;
+  hasConnection: boolean;
   fileLocations: {
     workingDirectory: string;
     runtimeEnvFile: string;
@@ -89,91 +91,101 @@ export async function collectServiceHealthSummary(
   options: HealthSummaryOptions = {}
 ): Promise<ServiceHealthSummary> {
   const checkedAt = new Date().toISOString();
-  const client = db2ClientFactory.create(config);
   const checks: ProfileHealthCheck[] = [];
   const notes: string[] = [];
+  const hasConnection = config.connectionString.length > 0;
 
-  let basicSelectStatus: 'ok' | 'error' = 'ok';
+  let basicSelectStatus: 'ok' | 'error' | 'skipped' = 'skipped';
   let currentTimestamp: string | undefined;
   let basicSelectError: { code: string; message: string } | undefined;
+  let basicSelectSkippedReason: string | undefined;
 
-  try {
-    const result = await client.query(BASIC_SELECT_HEALTH_SQL, [], {
-      timeoutMs: config.limits.metadataTimeoutMs,
-      label: 'health_basic_select'
-    });
-    currentTimestamp = extractCurrentTimestamp(result.rows);
-  } catch (error) {
-    basicSelectStatus = 'error';
-    const appError = toAppError(error);
-    basicSelectError = { code: appError.code, message: appError.message };
-  }
-
-  if (config.mode === 'readonly_procedures' || config.mode === 'full') {
-    const hasGetDbsizeInfo = config.procedureAllowlist.some(
-      (entry) => entry.schema.toUpperCase() === 'SYSPROC' && entry.name.toUpperCase() === 'GET_DBSIZE_INFO'
-    );
-    const canCallProcedures = config.mode === 'full' || hasGetDbsizeInfo;
-
-    let procedureStatus: 'ok' | 'error' | 'skipped' = 'skipped';
-    let procedureSkippedReason: string | undefined;
-    let procedureError: { code: string; message: string } | undefined;
-
-    if (canCallProcedures) {
-      try {
-        await client.callProcedure(PROCEDURE_ACCESS_PROBE.schema, PROCEDURE_ACCESS_PROBE.name, PROCEDURE_ACCESS_PROBE.params, {
-          timeoutMs: config.limits.queryTimeoutMs,
-          label: 'health_procedure_probe'
-        });
-        procedureStatus = 'ok';
-      } catch (error) {
-        procedureStatus = 'error';
-        const appError = toAppError(error);
-        procedureError = { code: appError.code, message: appError.message };
-      }
-    } else {
-      procedureSkippedReason = 'SYSPROC.GET_DBSIZE_INFO is not in the procedure allowlist.';
-    }
-
-    checks.push({
-      label: 'Stored procedure probe',
-      command: PROCEDURE_ACCESS_PROBE_COMMAND,
-      checkedAt,
-      status: procedureStatus,
-      skippedReason: procedureSkippedReason,
-      error: procedureError,
-      detail: procedureStatus === 'ok' ? 'Stored procedure call succeeded.' : undefined
-    });
-  }
-
-  if (config.mode === 'full' && options.includeDetailedChecks) {
-    let createProcStatus: 'ok' | 'error' = 'ok';
-    let createProcError: { code: string; message: string } | undefined;
+  if (!hasConnection) {
+    basicSelectSkippedReason = 'No DB2 connection string configured. Set DB2_MCP_CONNECTION_STRING or individual DB2_MCP_CONNECTION_STRING_* environment variables.';
+    notes.push('Database health probes skipped: no connection string configured.');
+  } else {
+    const client = db2ClientFactory.create(config);
 
     try {
-      await client.query(FULL_CREATE_PROCEDURE_COMMAND, [], {
-        timeoutMs: config.limits.queryTimeoutMs,
-        label: 'health_create_procedure_probe'
+      const result = await client.query(BASIC_SELECT_HEALTH_SQL, [], {
+        timeoutMs: config.limits.metadataTimeoutMs,
+        label: 'health_basic_select'
       });
+      currentTimestamp = extractCurrentTimestamp(result.rows);
+      basicSelectStatus = 'ok';
     } catch (error) {
-      createProcStatus = 'error';
+      basicSelectStatus = 'error';
       const appError = toAppError(error);
-      createProcError = { code: appError.code, message: appError.message };
+      basicSelectError = { code: appError.code, message: appError.message };
     }
 
-    checks.push({
-      label: 'Create or replace procedure probe',
-      command: FULL_CREATE_PROCEDURE_COMMAND,
-      checkedAt,
-      status: createProcStatus,
-      error: createProcError,
-      detail: createProcStatus === 'ok' ? 'Create or replace procedure succeeded.' : undefined
-    });
+    if (config.mode === 'readonly_procedures' || config.mode === 'full') {
+      const hasGetDbsizeInfo = config.procedureAllowlist.some(
+        (entry) => entry.schema.toUpperCase() === 'SYSPROC' && entry.name.toUpperCase() === 'GET_DBSIZE_INFO'
+      );
+      const canCallProcedures = config.mode === 'full' || hasGetDbsizeInfo;
+
+      let procedureStatus: 'ok' | 'error' | 'skipped' = 'skipped';
+      let procedureSkippedReason: string | undefined;
+      let procedureError: { code: string; message: string } | undefined;
+
+      if (canCallProcedures) {
+        try {
+          await client.callProcedure(PROCEDURE_ACCESS_PROBE.schema, PROCEDURE_ACCESS_PROBE.name, PROCEDURE_ACCESS_PROBE.params, {
+            timeoutMs: config.limits.queryTimeoutMs,
+            label: 'health_procedure_probe'
+          });
+          procedureStatus = 'ok';
+        } catch (error) {
+          procedureStatus = 'error';
+          const appError = toAppError(error);
+          procedureError = { code: appError.code, message: appError.message };
+        }
+      } else {
+        procedureSkippedReason = 'SYSPROC.GET_DBSIZE_INFO is not in the procedure allowlist.';
+      }
+
+      checks.push({
+        label: 'Stored procedure probe',
+        command: PROCEDURE_ACCESS_PROBE_COMMAND,
+        checkedAt,
+        status: procedureStatus,
+        skippedReason: procedureSkippedReason,
+        error: procedureError,
+        detail: procedureStatus === 'ok' ? 'Stored procedure call succeeded.' : undefined
+      });
+    }
+
+    if (config.mode === 'full' && options.includeDetailedChecks) {
+      let createProcStatus: 'ok' | 'error' = 'ok';
+      let createProcError: { code: string; message: string } | undefined;
+
+      try {
+        await client.query(FULL_CREATE_PROCEDURE_COMMAND, [], {
+          timeoutMs: config.limits.queryTimeoutMs,
+          label: 'health_create_procedure_probe'
+        });
+      } catch (error) {
+        createProcStatus = 'error';
+        const appError = toAppError(error);
+        createProcError = { code: appError.code, message: appError.message };
+      }
+
+      checks.push({
+        label: 'Create or replace procedure probe',
+        command: FULL_CREATE_PROCEDURE_COMMAND,
+        checkedAt,
+        status: createProcStatus,
+        error: createProcError,
+        detail: createProcStatus === 'ok' ? 'Create or replace procedure succeeded.' : undefined
+      });
+    }
+
+    await client.close().catch(() => undefined);
   }
 
-  await client.close().catch(() => undefined);
-
-  const overallStatus = basicSelectStatus === 'ok'
+  const hasConfigErrors = config.configErrors.length > 0;
+  const overallStatus = !hasConfigErrors && basicSelectStatus === 'ok'
     && checks.every((check) => check.status !== 'error') ? 'ok' : 'degraded';
 
   return {
@@ -187,6 +199,8 @@ export async function collectServiceHealthSummary(
     toolCount: config.tools.length,
     procedureAllowlist: config.procedureAllowlist.map((entry) => `${entry.schema}.${entry.name}`),
     publicBaseUrl: config.server.publicBaseUrl,
+    configErrors: config.configErrors,
+    hasConnection,
     fileLocations: {
       workingDirectory: process.cwd(),
       runtimeEnvFile: DEFAULT_RUNTIME_ENV_FILE,
@@ -199,6 +213,7 @@ export async function collectServiceHealthSummary(
       checkedAt,
       status: basicSelectStatus,
       currentTimestamp,
+      skippedReason: basicSelectSkippedReason,
       error: basicSelectError
     },
     checks,
@@ -248,6 +263,26 @@ export function renderStatusPage(summary: ServiceHealthSummary): string {
     </tr>`;
   }).join('');
 
+  const basicSelectHtml = summary.basicSelect.status === 'skipped'
+    ? '<span class="status-skipped">⏭️ Skipped</span>' + (summary.basicSelect.skippedReason ? '<div class="detail-text">' + escapeHtml(summary.basicSelect.skippedReason) + '</div>' : '')
+    : summary.basicSelect.status === 'ok'
+      ? '<span class="status-ok">✅ OK</span>' + (summary.basicSelect.currentTimestamp ? '<div class="detail-text">' + escapeHtml(summary.basicSelect.currentTimestamp) + '</div>' : '')
+      : '<span class="status-error">❌ Error</span>' + (summary.basicSelect.error ? '<div class="detail-text">' + escapeHtml(summary.basicSelect.error.message) + '</div>' : '');
+
+  const configErrorsHtml = summary.configErrors.length > 0
+    ? `<div class="card" style="border-color:#dc2626; background:#fef2f2;">
+       <h2 style="color:#991b1b;">⚠️ Configuration Errors</h2>
+       <p style="margin-bottom:0.75rem;color:#991b1b;font-size:0.88rem;">The following environment variables are missing or invalid. The server is running in degraded mode until these are resolved:</p>
+       <table>
+         <thead><tr><th style="width:280px;">Variable</th><th>Error</th></tr></thead>
+         <tbody>
+           ${summary.configErrors.map((err) => `<tr><td><code>${escapeHtml(err.variable)}</code></td><td style="color:#991b1b;">${escapeHtml(err.message)}</td></tr>`).join('')}
+         </tbody>
+       </table>
+       <p style="margin-top:0.75rem;font-size:0.82rem;color:#991b1b;">Set these variables in <code>${escapeHtml(summary.fileLocations.runtimeEnvFile)}</code> and restart the service: <code>systemctl restart ${escapeHtml(summary.fileLocations.serviceName)}</code></p>
+     </div>`
+    : '';
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -278,6 +313,7 @@ export function renderStatusPage(summary: ServiceHealthSummary): string {
     pre code { background: none; color: inherit; padding: 0; font-size: inherit; }
     .status-ok { color: #16a34a; font-weight: 600; }
     .status-error { color: #dc2626; font-weight: 600; }
+    .status-skipped { color: #64748b; font-weight: 600; }
     .note { background: #fffbeb; border: 1px solid #fcd34d; padding: 0.6rem 1rem; margin: 0.5rem 0; border-radius: 6px; font-size: 0.88rem; line-height: 1.5; }
     .kv-table th { width: 180px; white-space: nowrap; }
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
@@ -303,6 +339,8 @@ export function renderStatusPage(summary: ServiceHealthSummary): string {
         <a href="/healthz">Health JSON</a>
       </nav>
     </header>
+
+    ${configErrorsHtml}
 
     <div class="grid-2">
       <div class="card">
@@ -341,9 +379,7 @@ export function renderStatusPage(summary: ServiceHealthSummary): string {
         <tr>
           <td>Basic Select Probe</td>
           <td class="detail-cell"><code>${escapeHtml(summary.basicSelect.sql)}</code></td>
-          <td>${summary.basicSelect.status === 'ok'
-            ? '<span class="status-ok">✅ OK</span>' + (summary.basicSelect.currentTimestamp ? '<div class="detail-text">' + escapeHtml(summary.basicSelect.currentTimestamp) + '</div>' : '')
-            : '<span class="status-error">❌ Error</span>' + (summary.basicSelect.error ? '<div class="detail-text">' + escapeHtml(summary.basicSelect.error.message) + '</div>' : '')}</td>
+          <td>${basicSelectHtml}</td>
         </tr>
         ${checksHtml}
       </tbody>
