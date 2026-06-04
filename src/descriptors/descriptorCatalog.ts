@@ -55,6 +55,10 @@ export class DescriptorCatalog {
     return this.tableMap.get(buildKey(schema, table));
   }
 
+  public async mergeFromFiles(files: string[]): Promise<void> {
+    await loadDescriptorFiles(files, this.tableMap);
+  }
+
   public searchBusinessTerms(query: string): TableDescriptor[] {
     const needle = query.trim().toUpperCase();
 
@@ -79,14 +83,20 @@ export class DescriptorCatalog {
     const fromDescriptor = this.getTable(fromSchema, fromTable);
     const toKey = buildKey(toSchema, toTable);
 
-    return (fromDescriptor?.relationships ?? []).filter((relationship) => normalizeTarget(relationship.target) === toKey);
+    return (fromDescriptor?.relationships ?? []).filter((relationship) => normalizeTarget(relationship.target, toSchema, toTable) === toKey);
   }
 }
 
-function normalizeTarget(target: string): string {
-  const [schema, table] = target.split('.', 2);
+function normalizeTarget(target: string, toSchema?: string, toTable?: string): string {
+  const parts = target.split('.', 2);
+  const schema = parts[0] ?? '';
+  const table = parts[1];
 
-  if (!schema || !table) {
+  if (!table) {
+    // Unqualified target — qualify it using available context
+    if (toSchema) {
+      return buildKey(toSchema, schema);
+    }
     return target.toUpperCase();
   }
 
@@ -102,12 +112,8 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
-export async function loadDescriptorCatalog(files: string[]): Promise<DescriptorCatalog> {
-  if (files.length === 0) {
-    return DescriptorCatalog.empty();
-  }
-
-  const tables: TableDescriptor[] = [];
+async function loadDescriptorFiles(files: string[], targetMap?: Map<string, TableDescriptor>): Promise<Map<string, TableDescriptor>> {
+  const tableMap = targetMap ?? new Map<string, TableDescriptor>();
 
   for (const filePath of files) {
     if (!(await fileExists(filePath))) {
@@ -128,8 +134,19 @@ export async function loadDescriptorCatalog(files: string[]): Promise<Descriptor
       throw new AppError('CONFIG_INVALID', `Descriptor file ${filePath} is invalid.`, 500, validated.error.flatten());
     }
 
-    tables.push(...(validated.data.tables ?? []));
+    for (const table of (validated.data.tables ?? [])) {
+      tableMap.set(buildKey(table.schema, table.table), table);
+    }
   }
 
-  return new DescriptorCatalog(tables);
+  return tableMap;
+}
+
+export async function loadDescriptorCatalog(files: string[]): Promise<DescriptorCatalog> {
+  if (files.length === 0) {
+    return DescriptorCatalog.empty();
+  }
+
+  const tableMap = await loadDescriptorFiles(files);
+  return new DescriptorCatalog([...tableMap.values()]);
 }

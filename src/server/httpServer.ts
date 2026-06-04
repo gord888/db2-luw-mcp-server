@@ -196,22 +196,23 @@ export function createHttpServer(dependencies: HttpServerDependencies): Server {
       }
 
       if (requestPath === '/api/descriptors') {
+        authenticateRequest(req.headers, dependencies.config);
         if (requestMethod === 'GET') {
           await handleDescriptorsGet(req, res, dependencies.config);
           return;
         }
         if (requestMethod === 'POST') {
           const body = await readJsonBody(req, dependencies.config.limits.requestBodyBytes);
-          await handleDescriptorsPost(req, res, dependencies.config, body as { filename?: string; content?: string });
+          await handleDescriptorsPost(req, res, dependencies.config, dependencies.descriptorCatalog, body as { filename?: string; content?: string });
           return;
         }
         if (requestMethod === 'PUT') {
           const body = await readJsonBody(req, dependencies.config.limits.requestBodyBytes);
-          await handleDescriptorsPut(req, res, dependencies.config, body as { path?: string; content?: string });
+          await handleDescriptorsPut(req, res, dependencies.config, dependencies.descriptorCatalog, body as { path?: string; content?: string });
           return;
         }
         if (requestMethod === 'DELETE') {
-          await handleDescriptorsDelete(req, res, dependencies.config);
+          await handleDescriptorsDelete(req, res, dependencies.config, dependencies.descriptorCatalog);
           return;
         }
         res.setHeader('Allow', 'GET, POST, PUT, DELETE');

@@ -6,6 +6,7 @@ import { z } from 'zod/v4';
 
 import type { ResolvedConfig } from '../config/types.js';
 import { AppError } from '../errors/AppError.js';
+import type { DescriptorCatalog } from '../descriptors/descriptorCatalog.js';
 import type { DescriptorCatalogDocument } from '../descriptors/descriptorTypes.js';
 
 const descriptorDocumentSchema = z.object({
@@ -107,7 +108,12 @@ async function getDescriptorDir(config: ResolvedConfig): Promise<string> {
   if (config.descriptorFiles.length > 0 && config.descriptorFiles[0]) {
     return dirname(config.descriptorFiles[0]);
   }
-  return process.cwd();
+  // Fallback: use the directory of the config if present, otherwise /app/config for container deployments
+  const configPath = process.env.DB2_MCP_CONFIG_PATH;
+  if (configPath) {
+    return dirname(configPath);
+  }
+  return process.env.DB2_MCP_CONFIG_DIR ?? '/app/config';
 }
 
 export async function handleDescriptorsGet(
@@ -137,6 +143,7 @@ export async function handleDescriptorsPost(
   req: IncomingMessage,
   res: ServerResponse,
   config: ResolvedConfig,
+  catalog: DescriptorCatalog,
   body: { filename?: string; content?: string }
 ): Promise<void> {
   if (!body.content) {
@@ -156,6 +163,12 @@ export async function handleDescriptorsPost(
 
   try {
     await writeFile(filePath, body.content, 'utf8');
+    // Hot-reload: merge the new file into the running catalog
+    try {
+      await catalog.mergeFromFiles([filePath]);
+    } catch {
+      // File is saved but catalog reload failed — non-fatal, will be picked up on restart
+    }
     writeJson(res, 201, { path: filePath, filename, valid: true, tableCount: validation.tableCount });
   } catch (error) {
     writeJson(res, 500, { error: `Failed to write file: ${error instanceof Error ? error.message : String(error)}` });
@@ -166,6 +179,7 @@ export async function handleDescriptorsPut(
   req: IncomingMessage,
   res: ServerResponse,
   config: ResolvedConfig,
+  catalog: DescriptorCatalog,
   body: { path?: string; content?: string }
 ): Promise<void> {
   if (!body.path || !body.content) {
@@ -186,6 +200,12 @@ export async function handleDescriptorsPut(
 
   try {
     await writeFile(body.path, body.content, 'utf8');
+    // Hot-reload: merge the updated file into the running catalog
+    try {
+      await catalog.mergeFromFiles([body.path]);
+    } catch {
+      // File is saved but catalog reload failed — non-fatal, will be picked up on restart
+    }
     writeJson(res, 200, { path: body.path, valid: true, tableCount: validation.tableCount });
   } catch (error) {
     writeJson(res, 500, { error: `Failed to update file: ${error instanceof Error ? error.message : String(error)}` });
@@ -195,7 +215,8 @@ export async function handleDescriptorsPut(
 export async function handleDescriptorsDelete(
   req: IncomingMessage,
   res: ServerResponse,
-  config: ResolvedConfig
+  config: ResolvedConfig,
+  catalog: DescriptorCatalog
 ): Promise<void> {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
   const filePath = url.searchParams.get('path');
@@ -212,6 +233,12 @@ export async function handleDescriptorsDelete(
 
   try {
     await unlink(filePath);
+    // Reload all configured files to remove deleted tables from the catalog
+    try {
+      await catalog.mergeFromFiles(config.descriptorFiles);
+    } catch {
+      // Catalog reload failed — non-fatal
+    }
     writeJson(res, 200, { path: filePath, deleted: true });
   } catch (error) {
     writeJson(res, 500, { error: `Failed to delete file: ${error instanceof Error ? error.message : String(error)}` });
