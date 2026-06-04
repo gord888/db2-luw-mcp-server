@@ -1,4 +1,4 @@
-import { access, readFile, stat, unlink, writeFile } from 'node:fs/promises';
+import { access, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import yaml from 'yaml';
@@ -69,11 +69,14 @@ function validateDescriptorYaml(content: string): { valid: boolean; tableCount: 
   }
 }
 
-export async function listDescriptorFiles(paths: string[]): Promise<DescriptorFileInfo[]> {
+export async function listDescriptorFiles(paths: string[], descriptorDir?: string): Promise<DescriptorFileInfo[]> {
   const results: DescriptorFileInfo[] = [];
+  const seenPaths = new Set<string>();
+
   for (const filePath of paths) {
     try {
       const stats = await stat(filePath);
+      seenPaths.add(filePath);
       let content = '';
       try {
         content = await readFile(filePath, 'utf8');
@@ -90,6 +93,39 @@ export async function listDescriptorFiles(paths: string[]): Promise<DescriptorFi
       });
     } catch { /* file doesn't exist — skip */ }
   }
+
+  // Also scan the descriptor directory for additional YAML files (e.g. uploaded via UI)
+  if (descriptorDir) {
+    try {
+      const entries = await readdir(descriptorDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        if (!entry.name.endsWith('.yaml') && !entry.name.endsWith('.yml')) continue;
+        const fullPath = `${descriptorDir}/${entry.name}`;
+        if (seenPaths.has(fullPath)) continue; // already listed from config
+
+        try {
+          const stats = await stat(fullPath);
+          seenPaths.add(fullPath);
+          let content = '';
+          try {
+            content = await readFile(fullPath, 'utf8');
+          } catch { /* skip unreadable */ }
+          const validation = content ? validateDescriptorYaml(content) : { valid: false, tableCount: 0, error: 'File is empty or unreadable' };
+          results.push({
+            path: fullPath,
+            name: entry.name,
+            lastModified: stats.mtime.toISOString(),
+            size: stats.size,
+            valid: validation.valid,
+            tableCount: validation.tableCount,
+            error: validation.error
+          });
+        } catch { /* skip inaccessible files */ }
+      }
+    } catch { /* directory not readable — skip */ }
+  }
+
   return results;
 }
 
@@ -135,7 +171,7 @@ export async function handleDescriptorsGet(
     return;
   }
 
-  const files = await listDescriptorFiles(config.descriptorFiles);
+  const files = await listDescriptorFiles(config.descriptorFiles, dirname(config.descriptorFiles[0] ?? '.'));
   writeJson(res, 200, { files });
 }
 
@@ -245,7 +281,7 @@ export async function handleDescriptorsDelete(
   }
 }
 
-export function renderDescriptorPage(files: DescriptorFileInfo[], publicBaseUrl?: string): string {
+export function renderDescriptorPage(files: DescriptorFileInfo[], publicBaseUrl?: string, apiKey?: string): string {
   const filesHtml = files.length > 0
     ? files.map((f) => {
         const statusBadge = f.valid
@@ -374,6 +410,7 @@ export function renderDescriptorPage(files: DescriptorFileInfo[], publicBaseUrl?
   <div id="toast-container"></div>
 
   <script>
+    const API_KEY = ${apiKey ? JSON.stringify(apiKey) : 'null'};
     let editingPath = null;
 
     function showToast(message, type) {
@@ -403,7 +440,7 @@ export function renderDescriptorPage(files: DescriptorFileInfo[], publicBaseUrl?
       try {
         const res = await fetch('/api/descriptors', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + API_KEY },
           body: JSON.stringify(body)
         });
         const data = await res.json();
@@ -427,7 +464,9 @@ export function renderDescriptorPage(files: DescriptorFileInfo[], publicBaseUrl?
 
     async function viewFile(path) {
       try {
-        const res = await fetch('/api/descriptors?path=' + encodeURIComponent(path));
+        const res = await fetch('/api/descriptors?path=' + encodeURIComponent(path), {
+          headers: { 'Authorization': 'Bearer ' + API_KEY }
+        });
         const data = await res.json();
         if (res.ok) {
           editingPath = path;
@@ -450,7 +489,7 @@ export function renderDescriptorPage(files: DescriptorFileInfo[], publicBaseUrl?
       try {
         const res = await fetch('/api/descriptors', {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + API_KEY },
           body: JSON.stringify({ path: editingPath, content })
         });
         const data = await res.json();
@@ -478,7 +517,10 @@ export function renderDescriptorPage(files: DescriptorFileInfo[], publicBaseUrl?
     async function deleteFile(path) {
       if (!confirm('Delete ' + path + '? This cannot be undone.')) return;
       try {
-        const res = await fetch('/api/descriptors?path=' + encodeURIComponent(path), { method: 'DELETE' });
+        const res = await fetch('/api/descriptors?path=' + encodeURIComponent(path), {
+          method: 'DELETE',
+          headers: { 'Authorization': 'Bearer ' + API_KEY }
+        });
         const data = await res.json();
         if (res.ok) {
           showToast('File deleted.', 'success');

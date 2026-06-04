@@ -19,7 +19,8 @@
     "prepare": "npm run build",
     "start": "node dist/index.js",
     "start:stdio": "node dist/stdio.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "vitest run tests/descriptor-page.e2e.test.ts"
   },
   "keywords": [
     "mcp",
@@ -38,6 +39,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
+    "playwright": "^1.60.0",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3",
     "vitest": "^2.1.9"

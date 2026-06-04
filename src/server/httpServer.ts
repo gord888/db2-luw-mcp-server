@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { dirname } from 'node:path';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
 import type { AuditLogger } from '../audit/auditLogger.js';
@@ -170,7 +171,8 @@ async function handleMcp(
 export function createHttpServer(dependencies: HttpServerDependencies): Server {
   return createServer(async (req, res) => {
     try {
-      const requestPath = req.url ?? '/';
+      const requestUrl = req.url ?? '/';
+      const requestPath = requestUrl.split('?')[0] ?? '/';
       const requestMethod = req.method ?? 'GET';
       const isMcpRoute = requestPath === '/mcp' || requestPath === '/';
 
@@ -190,8 +192,8 @@ export function createHttpServer(dependencies: HttpServerDependencies): Server {
       }
 
       if (requestPath === '/descriptors' && requestMethod === 'GET') {
-        const files = await listDescriptorFiles(dependencies.config.descriptorFiles);
-        writeHtml(res, 200, renderDescriptorPage(files, dependencies.config.server.publicBaseUrl));
+        const files = await listDescriptorFiles(dependencies.config.descriptorFiles, dirname(dependencies.config.descriptorFiles[0] ?? '.'));
+        writeHtml(res, 200, renderDescriptorPage(files, dependencies.config.server.publicBaseUrl, dependencies.config.apiKey));
         return;
       }
 

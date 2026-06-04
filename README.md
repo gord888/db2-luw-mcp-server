@@ -43,6 +43,18 @@ npm run start:stdio
 
 One container, one mode. All tools for that mode are derived automatically. No YAML config files needed.
 
+## Screenshots
+
+### Status Page
+`GET /status` — health checks, file locations, tool inventory, and MCP client config.
+
+![Status Page](docs/images/status-page.png)
+
+### Descriptor File Manager
+`GET /descriptors` — upload, view, edit, and delete business-context descriptor files.
+
+![Descriptor Page](docs/images/descriptor-page.png)
+
 ## Environment variables
 
 | Variable | Required | Default | Purpose |
