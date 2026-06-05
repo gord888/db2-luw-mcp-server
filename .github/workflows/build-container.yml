@@ -25,7 +25,7 @@ permissions:
   packages: write
 
 env:
-  NODE_VERSION: 20.x
+  NODE_VERSION: 24.x
   SOURCE_ARTIFACT_NAME: db2-luw-mcp-source
   CONTAINER_ARTIFACT_NAME: db2-luw-mcp-image
   SOURCE_BUNDLE_FILE: db2-luw-mcp-server-source.tgz
@@ -42,7 +42,7 @@ jobs:
       build_version: ${{ steps.version.outputs.build_version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Generate build version
         id: version
@@ -50,7 +50,7 @@ jobs:
         run: echo "build_version=$(date +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -77,7 +77,7 @@ jobs:
             .
 
       - name: Publish source bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ env.SOURCE_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/source/${{ env.SOURCE_BUNDLE_FILE }}
@@ -91,7 +91,7 @@ jobs:
       BUILD_VERSION: ${{ needs.build.outputs.build_version }}
     steps:
       - name: Download source bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: ${{ env.SOURCE_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/source-artifact
@@ -124,7 +124,7 @@ jobs:
           docker save "${IMAGE_REF}" | gzip > "${{ runner.temp }}/image/${{ env.CONTAINER_BUNDLE_FILE }}"
 
       - name: Publish container image bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ env.CONTAINER_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/image/${{ env.CONTAINER_BUNDLE_FILE }}
@@ -142,7 +142,7 @@ jobs:
       BUILD_VERSION: ${{ needs.build.outputs.build_version }}
     steps:
       - name: Download container image bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: ${{ env.CONTAINER_ARTIFACT_NAME }}
           path: ${{ runner.temp }}/image-artifact

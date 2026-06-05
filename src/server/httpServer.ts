@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { dirname } from 'node:path';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 
 import type { AuditLogger } from '../audit/auditLogger.js';
@@ -9,6 +10,14 @@ import { AppError } from '../errors/AppError.js';
 import { toAppError, toErrorPayload } from '../errors/errorMapper.js';
 import { authenticateRequest } from './auth.js';
 import { collectServiceHealthSummary, renderStatusPage } from './healthStatus.js';
+import {
+  handleDescriptorsDelete,
+  handleDescriptorsGet,
+  handleDescriptorsPost,
+  handleDescriptorsPut,
+  listDescriptorFiles,
+  renderDescriptorPage
+} from './descriptorManager.js';
 import { createMcpServer } from './mcpServer.js';
 import { createRequestContext } from './requestContext.js';
 
@@ -94,6 +103,8 @@ function writeHtml(res: ServerResponse, statusCode: number, body: string): void 
   res.end(body);
 }
 
+export { writeHtml };
+
 async function handleReadiness(
   res: ServerResponse,
   dependencies: HttpServerDependencies
@@ -160,7 +171,8 @@ async function handleMcp(
 export function createHttpServer(dependencies: HttpServerDependencies): Server {
   return createServer(async (req, res) => {
     try {
-      const requestPath = req.url ?? '/';
+      const requestUrl = req.url ?? '/';
+      const requestPath = requestUrl.split('?')[0] ?? '/';
       const requestMethod = req.method ?? 'GET';
       const isMcpRoute = requestPath === '/mcp' || requestPath === '/';
 
@@ -176,6 +188,37 @@ export function createHttpServer(dependencies: HttpServerDependencies): Server {
 
       if ((req.method ?? 'GET') === 'GET' && req.url === '/status') {
         await handleStatusPage(res, dependencies);
+        return;
+      }
+
+      if (requestPath === '/descriptors' && requestMethod === 'GET') {
+        const files = await listDescriptorFiles(dependencies.config.descriptorFiles, dirname(dependencies.config.descriptorFiles[0] ?? '.'));
+        writeHtml(res, 200, renderDescriptorPage(files, dependencies.config.server.publicBaseUrl, dependencies.config.apiKey));
+        return;
+      }
+
+      if (requestPath === '/api/descriptors') {
+        authenticateRequest(req.headers, dependencies.config);
+        if (requestMethod === 'GET') {
+          await handleDescriptorsGet(req, res, dependencies.config);
+          return;
+        }
+        if (requestMethod === 'POST') {
+          const body = await readJsonBody(req, dependencies.config.limits.requestBodyBytes);
+          await handleDescriptorsPost(req, res, dependencies.config, dependencies.descriptorCatalog, body as { filename?: string; content?: string });
+          return;
+        }
+        if (requestMethod === 'PUT') {
+          const body = await readJsonBody(req, dependencies.config.limits.requestBodyBytes);
+          await handleDescriptorsPut(req, res, dependencies.config, dependencies.descriptorCatalog, body as { path?: string; content?: string });
+          return;
+        }
+        if (requestMethod === 'DELETE') {
+          await handleDescriptorsDelete(req, res, dependencies.config, dependencies.descriptorCatalog);
+          return;
+        }
+        res.setHeader('Allow', 'GET, POST, PUT, DELETE');
+        writeJson(res, 405, { error: 'Method Not Allowed' });
         return;
       }
 

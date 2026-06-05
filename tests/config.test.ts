@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { loadConfig } from '../src/config/loadConfig.js';
-import { AppError } from '../src/errors/AppError.js';
 
 const trackedEnv = [
   'DB2_MCP_MODE',
@@ -148,8 +147,17 @@ describe('loadConfig', () => {
     expect(config.descriptorFiles[1]).toContain('extra.yaml');
   });
 
-  it('throws when required env vars are missing', () => {
-    expect(() => loadConfig()).toThrowError(AppError);
+  it('returns config errors when required env vars are missing', () => {
+    const config = loadConfig();
+
+    expect(config.configErrors).not.toHaveLength(0);
+    const errorVars = config.configErrors.map((e) => e.variable);
+    expect(errorVars).toContain('DB2_MCP_MODE');
+    expect(errorVars).toContain('DB2_MCP_API_KEY');
+    expect(errorVars).toContain('DB2_MCP_CONNECTION_STRING');
+    expect(config.mode).toBe('readonly');
+    expect(config.apiKey).toBe('');
+    expect(config.connectionString).toBe('');
   });
 
   it('builds connection string from individual env vars with defaults', () => {
@@ -212,20 +220,33 @@ describe('loadConfig', () => {
     );
   });
 
-  it('throws when individual vars are partially set', () => {
+  it('returns config errors when individual vars are partially set', () => {
     process.env.DB2_MCP_MODE = 'readonly';
     process.env.DB2_MCP_API_KEY = 'readonly-key';
     process.env.DB2_MCP_CONNECTION_STRING_DATABASE = 'SAMPLE';
     // missing HOSTNAME, UID, PWD
 
-    expect(() => loadConfig()).toThrowError(AppError);
+    const config = loadConfig();
+
+    expect(config.configErrors).not.toHaveLength(0);
+    const errorVars = config.configErrors.map((e) => e.variable);
+    expect(errorVars).toContain('DB2_MCP_CONNECTION_STRING_HOSTNAME');
+    expect(errorVars).toContain('DB2_MCP_CONNECTION_STRING_UID');
+    expect(errorVars).toContain('DB2_MCP_CONNECTION_STRING_PWD');
+    expect(config.connectionString).toBe('');
   });
 
-  it('throws for invalid mode', () => {
+  it('returns config error for invalid mode and falls back to readonly', () => {
     process.env.DB2_MCP_MODE = 'superadmin';
     process.env.DB2_MCP_API_KEY = 'key';
     process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=SAMPLE;';
 
-    expect(() => loadConfig()).toThrowError(AppError);
+    const config = loadConfig();
+
+    expect(config.configErrors).toHaveLength(1);
+    expect(config.configErrors[0]?.variable).toBe('DB2_MCP_MODE');
+    expect(config.mode).toBe('readonly');
+    expect(config.tools).toContain('run_query');
+    expect(config.tools).not.toContain('run_ddl');
   });
 });
