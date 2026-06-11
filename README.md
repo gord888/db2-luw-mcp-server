@@ -84,6 +84,9 @@ One container, one mode. All tools for that mode are derived automatically. No Y
 | `DB2_MCP_CALLER_LABEL` | No | *(mode name)* | Audit log identifier |
 | `DB2_MCP_DB_LABEL` | No | *(mode name)* | Audit log DB target label |
 | `DB2_MCP_DESCRIPTOR_FILES` | No | — | Comma-separated paths to YAML descriptor files |
+| `DB2_MCP_DESCRIPTOR_UPLOAD_DIR` | No | `/app/config` | Descriptor manager upload directory (must be writable) |
+| `DB2_MCP_CONFIG_PATH` | No | — | Path to config file (used to resolve descriptor directory) |
+| `DB2_MCP_CONFIG_DIR` | No | `/app/config` | Config directory (fallback for descriptor uploads when `DESCRIPTOR_UPLOAD_DIR` is not set) |
 | `DB2_MCP_PROCEDURE_ALLOWLIST` | No | — | Comma-separated `SCHEMA.NAME` entries |
 | `LOG_LEVEL` | No | `info` | Pino log level |
 
