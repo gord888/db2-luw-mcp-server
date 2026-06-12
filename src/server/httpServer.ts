@@ -11,6 +11,7 @@ import { toAppError, toErrorPayload } from '../errors/errorMapper.js';
 import { authenticateRequest } from './auth.js';
 import { collectServiceHealthSummary, renderStatusPage } from './healthStatus.js';
 import {
+  getDescriptorDir,
   handleDescriptorsDelete,
   handleDescriptorsGet,
   handleDescriptorsPost,
@@ -192,7 +193,8 @@ export function createHttpServer(dependencies: HttpServerDependencies): Server {
       }
 
       if (requestPath === '/descriptors' && requestMethod === 'GET') {
-        const files = await listDescriptorFiles(dependencies.config.descriptorFiles, dirname(dependencies.config.descriptorFiles[0] ?? '.'));
+        const descriptorDir = await getDescriptorDir(dependencies.config);
+        const files = await listDescriptorFiles(dependencies.config.descriptorFiles, descriptorDir);
         writeHtml(res, 200, renderDescriptorPage(files, dependencies.config.server.publicBaseUrl, dependencies.config.apiKey));
         return;
       }

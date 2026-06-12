@@ -117,7 +117,7 @@ async function loadDescriptorFiles(files: string[], targetMap?: Map<string, Tabl
 
   for (const filePath of files) {
     if (!(await fileExists(filePath))) {
-      throw new AppError('CONFIG_INVALID', `Descriptor file ${filePath} does not exist.`, 500);
+      continue;
     }
 
     const fileContent = await readFile(filePath, 'utf8');

@@ -23,10 +23,7 @@ I wanted to leverage AI to accelerate DB2 DevOps and ITOps. There are a few othe
 export DB2_MCP_MODE=readonly
 export DB2_MCP_API_KEY=sk-your-api-key
 
-# Option A: Single connection string
-export DB2_MCP_CONNECTION_STRING="DATABASE=SAMPLE;HOSTNAME=db2.internal;PORT=50000;PROTOCOL=TCPIP;UID=mcp_user;PWD=secret;"
-
-# Option B: Individual connection vars (recommended for Proxmox — avoids semicolon/equals bugs in UIs)
+# Connection vars
 export DB2_MCP_CONNECTION_STRING_DATABASE=SAMPLE
 export DB2_MCP_CONNECTION_STRING_HOSTNAME=db2.internal
 export DB2_MCP_CONNECTION_STRING_PORT=50000
@@ -57,22 +54,23 @@ One container, one mode. All tools for that mode are derived automatically. No Y
 
 ## Environment variables
 
+### Connection
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `DB2_MCP_CONNECTION_STRING_DATABASE` | **Yes** | — | DB2 database name |
+| `DB2_MCP_CONNECTION_STRING_HOSTNAME` | **Yes** | — | DB2 hostname or IP |
+| `DB2_MCP_CONNECTION_STRING_UID` | **Yes** | — | DB2 username |
+| `DB2_MCP_CONNECTION_STRING_PWD` | **Yes** | — | DB2 password |
+| `DB2_MCP_CONNECTION_STRING_PORT` | No | `50000` | DB2 port |
+| `DB2_MCP_CONNECTION_STRING_PROTOCOL` | No | `TCPIP` | DB2 protocol |
+
+### Server
+
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `DB2_MCP_MODE` | **Yes** | — | `readonly`, `readonly_procedures`, or `full` |
 | `DB2_MCP_API_KEY` | **Yes** | — | Bearer token for MCP requests |
-| `DB2_MCP_CONNECTION_STRING` | **Yes**¹ | — | DB2 connection string |
-| `DB2_MCP_CONNECTION_STRING_DATABASE` | **Yes**¹ | — | DB2 database name |
-| `DB2_MCP_CONNECTION_STRING_HOSTNAME` | **Yes**¹ | — | DB2 hostname or IP |
-| `DB2_MCP_CONNECTION_STRING_UID` | **Yes**¹ | — | DB2 username |
-| `DB2_MCP_CONNECTION_STRING_PWD` | **Yes**¹ | — | DB2 password |
-| `DB2_MCP_CONNECTION_STRING_PORT` | No | `50000` | DB2 port |
-| `DB2_MCP_CONNECTION_STRING_PROTOCOL` | No | `TCPIP` | DB2 protocol |
-
-¹ Use EITHER `DB2_MCP_CONNECTION_STRING` OR the individual vars. Individual vars take precedence and are recommended for Proxmox deployments to avoid semicolon/equals issues in the Proxmox UI.
-
-| Variable | Required | Default | Purpose |
-|---|---|---|---|
 | `DB2_MCP_HOST` | No | `0.0.0.0` | Listen address |
 | `DB2_MCP_PORT` | No | `3000` | Listen port |
 | `DB2_MCP_PUBLIC_BASE_URL` | No | — | Public URL for SSE endpoint |
@@ -83,9 +81,26 @@ One container, one mode. All tools for that mode are derived automatically. No Y
 | `DB2_MCP_REQUEST_BODY_BYTES` | No | `1048576` | Max POST body size |
 | `DB2_MCP_CALLER_LABEL` | No | *(mode name)* | Audit log identifier |
 | `DB2_MCP_DB_LABEL` | No | *(mode name)* | Audit log DB target label |
-| `DB2_MCP_DESCRIPTOR_FILES` | No | — | Comma-separated paths to YAML descriptor files |
 | `DB2_MCP_PROCEDURE_ALLOWLIST` | No | — | Comma-separated `SCHEMA.NAME` entries |
 | `LOG_LEVEL` | No | `info` | Pino log level |
+
+### Descriptors
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `DB2_MCP_DESCRIPTOR_FILES` | No | — | Comma-separated absolute paths to YAML descriptor files to load at startup. Missing files are silently skipped. |
+| `DB2_MCP_DESCRIPTOR_UPLOAD_DIR` | No | `/app/config` | Directory for descriptor uploads via the web UI (must be writable by the node user). |
+| `DB2_MCP_CONFIG_PATH` | No | — | Path to config file (used to resolve the descriptor directory when neither `DESCRIPTOR_UPLOAD_DIR` nor `DESCRIPTOR_FILES` is set). |
+| `DB2_MCP_CONFIG_DIR` | No | `/app/config` | Config directory (final fallback for descriptor upload directory). |
+
+**Descriptor directory resolution** (determines where uploaded files are saved):
+1. `DB2_MCP_DESCRIPTOR_UPLOAD_DIR`
+2. Directory of the first file in `DB2_MCP_DESCRIPTOR_FILES`
+3. Directory of `DB2_MCP_CONFIG_PATH`
+4. `DB2_MCP_CONFIG_DIR`
+5. `/app/config`
+
+Descriptors can be uploaded and hot-reloaded via the `/descriptors` UI **without** setting `DB2_MCP_DESCRIPTOR_FILES`. To persist uploaded descriptors across restarts, list them in `DB2_MCP_DESCRIPTOR_FILES`.
 
 ## What it includes
 
@@ -99,6 +114,7 @@ One container, one mode. All tools for that mode are derived automatically. No Y
 - Optional stdio entrypoint for local `npx` / linked-command use
 - Linux container packaging plus Azure DevOps and GitHub Actions pipeline assets
 - Optional YAML descriptor catalog for business-term search and relationship hints
+- Web-based descriptor file manager (`GET /descriptors`)
 
 ## Repository contents
 
@@ -170,10 +186,15 @@ In `full` mode, the allowlist is **not enforced** — any procedure can be calle
 - `GET /healthz` — JSON health with basic DB2 select check
 - `GET /readyz` — JSON readiness (same check, returns `ready`/`degraded`)
 - `GET /status` — HTML status page with health checks, tool list, file locations, and operator instructions
+- `GET /descriptors` — HTML descriptor file manager for uploading, editing, and deleting YAML descriptor files
+- `GET /api/descriptors` — JSON API for listing and reading descriptor files
+- `POST /api/descriptors` — Upload a new descriptor file (auth required)
+- `PUT /api/descriptors` — Update an existing descriptor file (auth required)
+- `DELETE /api/descriptors` — Delete a descriptor file (auth required)
 - `GET /mcp`, `POST /mcp`, `DELETE /mcp` — MCP Streamable HTTP
 - `GET /`, `POST /`, `DELETE /` — MCP alias for simpler clients
 
-`/healthz`, `/readyz`, and `/status` are public — no auth required.
+`/healthz`, `/readyz`, `/status`, and `/descriptors` are public — no auth required.
 
 ## Azure DevOps pipeline
 
@@ -234,11 +255,6 @@ curl http://127.0.0.1:3000/healthz
 ```powershell
 $env:DB2_MCP_MODE = 'readonly'
 $env:DB2_MCP_API_KEY = 'my-api-key'
-
-# Option A: single string
-$env:DB2_MCP_CONNECTION_STRING = 'DATABASE=SAMPLE;HOSTNAME=db2.internal;PORT=50000;PROTOCOL=TCPIP;UID=db2_mcp;PWD=secret;'
-
-# Option B: individual vars
 $env:DB2_MCP_CONNECTION_STRING_DATABASE = 'SAMPLE'
 $env:DB2_MCP_CONNECTION_STRING_HOSTNAME = 'db2.internal'
 $env:DB2_MCP_CONNECTION_STRING_UID = 'db2_mcp'
@@ -250,19 +266,19 @@ npm run dev
 Or use the helper script:
 
 ```powershell
-.\scripts\start-readonly-mcp.ps1 -ApiKey "my-api-key" -ConnectionString "DATABASE=SAMPLE;..."
+.\scripts\start-readonly-mcp.ps1 -ApiKey "my-api-key" -Database "SAMPLE" -Hostname "db2.internal" -Uid "db2_mcp" -Pwd "secret"
 ```
 
 ### stdio mode
 
 ```powershell
-.\scripts\start-readonly-stdio-mcp.ps1 -ConnectionString "DATABASE=SAMPLE;..."
+.\scripts\start-readonly-stdio-mcp.ps1 -Database "SAMPLE" -Hostname "db2.internal" -Uid "db2_mcp" -Pwd "secret"
 ```
 
 ### Local tarball `npx`
 
 ```powershell
-.\scripts\start-readonly-stdio-npx.ps1 -ConnectionString "DATABASE=SAMPLE;..."
+.\scripts\start-readonly-stdio-npx.ps1 -Database "SAMPLE" -Hostname "db2.internal" -Uid "db2_mcp" -Pwd "secret"
 ```
 
 ## MCP client settings
@@ -294,7 +310,7 @@ Or use the helper script:
 }
 ```
 
-### Local linked-command (stdio) — individual vars
+### Local linked-command (stdio)
 
 ```json
 {
@@ -314,7 +330,7 @@ Or use the helper script:
 }
 ```
 
-### Published package / npx (stdio) — individual vars
+### Published package / npx (stdio)
 
 ```json
 {
@@ -338,14 +354,6 @@ Or use the helper script:
 ## Docker
 
 ```bash
-# Option A: Single connection string
-docker run -d -p 3000:3000 \
-  -e DB2_MCP_MODE=readonly \
-  -e DB2_MCP_API_KEY=sk-abc123 \
-  -e DB2_MCP_CONNECTION_STRING="DATABASE=SAMPLE;HOSTNAME=db2.internal;PORT=50000;PROTOCOL=TCPIP;UID=mcp;PWD=secret;" \
-  ghcr.io/gord888/db2-luw-mcp-server:latest
-
-# Option B: Individual connection vars
 docker run -d -p 3000:3000 \
   -e DB2_MCP_MODE=readonly \
   -e DB2_MCP_API_KEY=sk-abc123 \
@@ -362,3 +370,4 @@ docker run -d -p 3000:3000 \
 - `run_query` accepts read-only SQL only (SELECT, WITH)
 - `call_procedure` in `readonly_procedures` mode requires an exact allowlist match
 - Each container runs exactly one mode — deploy separate containers for separate modes
+- Descriptor files configured via `DB2_MCP_DESCRIPTOR_FILES` are silently skipped at startup if missing — the server will still start

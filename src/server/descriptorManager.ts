@@ -136,7 +136,7 @@ async function getDescriptorContent(filePath: string): Promise<string> {
   return readFile(filePath, 'utf8');
 }
 
-async function getDescriptorDir(config: ResolvedConfig): Promise<string> {
+export async function getDescriptorDir(config: ResolvedConfig): Promise<string> {
   const uploadDirEnv = process.env.DB2_MCP_DESCRIPTOR_UPLOAD_DIR;
   if (uploadDirEnv) {
     return uploadDirEnv;
