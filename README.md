@@ -78,8 +78,8 @@ One container, one mode. All tools for that mode are derived automatically. No Y
 | `DB2_MCP_PUBLIC_BASE_URL` | No | — | Public URL for SSE endpoint |
 | `DB2_MCP_MAX_ROWS` | No | `1000` | Hard row cap |
 | `DB2_MCP_DEFAULT_PREVIEW_ROWS` | No | `50` | Default preview limit |
-| `DB2_MCP_QUERY_TIMEOUT_MS` | No | `30000` | Query timeout |
-| `DB2_MCP_METADATA_TIMEOUT_MS` | No | `15000` | Metadata query timeout |
+| `DB2_MCP_QUERY_TIMEOUT_MS` | No | `30000` | Default Db2 statement timeout; callers can override it on execution tools |
+| `DB2_MCP_METADATA_TIMEOUT_MS` | No | `15000` | Db2 statement timeout for catalog queries |
 | `DB2_MCP_REQUEST_BODY_BYTES` | No | `1048576` | Max POST body size |
 | `DB2_MCP_CALLER_LABEL` | No | *(mode name)* | Audit log identifier |
 | `DB2_MCP_DB_LABEL` | No | *(mode name)* | Audit log DB target label |
@@ -146,6 +146,52 @@ One container, one mode. All tools for that mode are derived automatically. No Y
 | `drop_function` | — | — | ✅ |
 | `deploy_view` | — | — | ✅ |
 | `drop_view` | — | — | ✅ |
+
+### Caller-selected query timeouts (issue #4, Phase 1)
+
+`run_query`, `preview_table`, `explain_query`, `call_procedure`, `run_ddl`, and all
+`deploy_*` / `drop_*` tools accept an optional `queryTimeoutMs` argument:
+
+```json
+{
+  "sql": "SELECT TABNAME FROM SYSCAT.TABLES",
+  "queryTimeoutMs": 1200000
+}
+```
+
+- If omitted, the server uses `DB2_MCP_QUERY_TIMEOUT_MS` (default: 30 seconds).
+  **30 seconds is a default, not a cap.** The example allows 20 minutes.
+- Values must be positive integers. Zero/unlimited execution is not supported.
+  The only upper bound is the driver's integer representation (2,147,483,647,000 ms),
+  not a server policy limit.
+- Db2 CLI uses whole seconds; milliseconds are rounded **up**. A request for
+  30,001 ms becomes 31,000 ms. Successful execution-tool responses include the
+  additive `effectiveQueryTimeoutMs` field; query/procedure warnings also describe rounding.
+- The server sets `SQL_ATTR_QUERY_TIMEOUT` on each actual statement **before**
+  preparing/executing it. It no longer races database execution against a
+  JavaScript response timer. Failure to configure the attribute fails the operation;
+  there is no fallback to untimed SQL.
+- Connection establishment has a separate 10-second driver login timeout. It is
+  not shortened or extended by the query argument.
+- This is a **driver statement timeout**, not a hard wall-clock deadline for an
+  entire tool call. Db2/CLI controls interruption timing and coverage, including
+  fetching and network behavior. Multi-statement tools (explain and metadata) apply
+  their timeout separately to each statement, and stop if a statement fails.
+- Driver timeout states `HYT00` / `HYT01` return `DB_TIMEOUT`. `57014` / `HY008` return
+  `DB_EXECUTION_INTERRUPTED` because it may indicate timeout or external cancellation.
+  Neither establishes rollback of previously committed procedure/DDL work.
+  Live CLI testing returned `HY008` for a timed-out SQL read even though its message
+  contained server SQLSTATE `57014`. External routines such as `DBMS_ALERT.SLEEP`
+  can finish their wait despite a shorter statement timeout; this is not a force-kill guarantee.
+  Network errors and client disconnects likewise do not prove failure or rollback;
+  inspect effects before retrying writes.
+- Calls remain synchronous. Configure the calling client's MCP request timeout
+  and any HTTP proxy timeout to accommodate the intended duration. Disconnecting
+  does not provide manual cancellation, a resumable operation token, or result retrieval.
+
+Phase 2 will address asynchronous operation handles, status/results, actual cancellation,
+and permission-controlled force termination. See [timeout verification and limits](docs/query-timeouts.md)
+for the nonproduction integration checks needed before deployment.
 
 ### Procedure allowlist
 

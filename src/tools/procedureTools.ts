@@ -4,6 +4,7 @@ import { assertProcedureAllowlisted, isProcedureAllowlisted } from '../db2/proce
 import type { Db2Parameter } from '../db2/Db2Client.js';
 import type { ToolDefinition } from './metadataTools.js';
 import { withDbClient } from './toolContext.js';
+import { effectiveQueryTimeout, queryTimeoutSchema } from './queryTimeout.js';
 
 const scalarSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 
@@ -118,9 +119,10 @@ export function getProcedureToolDefinitions(): ToolDefinition[] {
       inputSchema: z.object({
         schema: z.string(),
         procedure: z.string(),
-        params: z.array(scalarSchema).default([])
+        params: z.array(scalarSchema).default([]),
+        queryTimeoutMs: queryTimeoutSchema
       }),
-      handler: async ({ schema, procedure, params }, services) => {
+      handler: async ({ schema, procedure, params, queryTimeoutMs }, services) => {
         const normalizedSchema = schema.toUpperCase();
         const normalizedProcedure = procedure.toUpperCase();
         if (services.config.mode !== 'full') {
@@ -129,12 +131,12 @@ export function getProcedureToolDefinitions(): ToolDefinition[] {
 
         return withDbClient(services, async (client) => {
           const result = await client.callProcedure(normalizedSchema, normalizedProcedure, params as Db2Parameter[], {
-            timeoutMs: services.config.limits.queryTimeoutMs,
+            timeoutMs: queryTimeoutMs ?? services.config.limits.queryTimeoutMs,
             label: 'call_procedure'
           });
 
           return {
-            data: result,
+            data: { ...result, effectiveQueryTimeoutMs: effectiveQueryTimeout(queryTimeoutMs, services.config.limits.queryTimeoutMs) },
             rowCount: result.rowCount,
             normalizedObjectNames: [`${normalizedSchema}.${normalizedProcedure}`]
           };

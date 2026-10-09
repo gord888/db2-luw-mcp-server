@@ -174,6 +174,66 @@ afterEach(async () => {
 });
 
 describe('MCP server integration', () => {
+  const timedCalls = [
+    { name: 'run_query', arguments: { sql: 'SELECT 1 FROM SYSIBM.SYSDUMMY1' } },
+    { name: 'preview_table', arguments: { schema: 'TEST', table: 'T' } },
+    { name: 'explain_query', arguments: { sql: 'SELECT 1 FROM SYSIBM.SYSDUMMY1' } },
+    { name: 'call_procedure', arguments: { schema: 'TEST', procedure: 'P', params: [] } },
+    { name: 'run_ddl', arguments: { sql: 'CREATE VIEW TEST.V AS VALUES 1' } },
+    { name: 'deploy_procedure', arguments: { schema: 'TEST', procedure: 'P', sql: 'CREATE PROCEDURE TEST.P() LANGUAGE SQL BEGIN END' } },
+    { name: 'drop_procedure', arguments: { schema: 'TEST', procedure: 'P' } },
+    { name: 'deploy_function', arguments: { schema: 'TEST', function: 'F', sql: 'CREATE FUNCTION TEST.F() RETURNS INTEGER RETURN 1' } },
+    { name: 'drop_function', arguments: { schema: 'TEST', function: 'F' } },
+    { name: 'deploy_view', arguments: { schema: 'TEST', view: 'V', sql: 'CREATE VIEW TEST.V AS VALUES 1' } },
+    { name: 'drop_view', arguments: { schema: 'TEST', view: 'V' } }
+  ] as const;
+
+  it.each(timedCalls)('uses the default or caller-selected timeout for $name', async (call) => {
+    const observed: number[] = [];
+    const record = (options: QueryOptions) => observed.push(options.timeoutMs);
+    const connected = await connectTestServer(
+      createFullConfig([call.name]),
+      new FakeDb2ClientFactory(() => new FakeDb2Client(
+        async (_sql, _params, options) => { record(options); return { columns: [], rows: [], rowCount: 0, warnings: [] }; },
+        async (sql, _params, options) => { record(options); return { statementText: sql, details: [] }; },
+        async (_schema, _name, _params, options) => { record(options); return { rows: [], rowCount: 0, outputParameters: {}, warnings: [] }; }
+      ))
+    );
+    openServers.push(connected);
+    const defaults = await connected.client.callTool(call);
+    expect(defaults.isError).not.toBe(true);
+    expect(parseToolText(defaults).effectiveQueryTimeoutMs).toBe(30000);
+    const custom = await connected.client.callTool({ ...call, arguments: { ...call.arguments, queryTimeoutMs: 1200001 } });
+    expect(custom.isError).not.toBe(true);
+    expect(parseToolText(custom).effectiveQueryTimeoutMs).toBe(1201000);
+    expect(observed).toEqual([30000, 1200001]);
+  });
+
+  it.each([0, -1, 1.5, '60000', null, 2147483647001])('rejects invalid caller timeout %s before creating a Db2 client', async (queryTimeoutMs) => {
+    let created = 0;
+    const connected = await connectTestServer(createReadonlyConfig(), new FakeDb2ClientFactory(() => {
+      created++;
+      return new FakeDb2Client(async () => ({ columns: [], rows: [], rowCount: 0, warnings: [] }));
+    }));
+    openServers.push(connected);
+    const result = await connected.client.callTool({ name: 'run_query', arguments: { sql: 'SELECT 1 FROM SYSIBM.SYSDUMMY1', queryTimeoutMs } });
+    expect(result.isError).toBe(true);
+    expect(created).toBe(0);
+  });
+
+  it('retains read-only SQL restrictions with a caller-selected timeout', async () => {
+    let created = 0;
+    const connected = await connectTestServer(createReadonlyConfig(), new FakeDb2ClientFactory(() => {
+      created++;
+      return new FakeDb2Client(async () => ({ columns: [], rows: [], rowCount: 0, warnings: [] }));
+    }));
+    openServers.push(connected);
+    const result = await connected.client.callTool({ name: 'run_query', arguments: { sql: 'DELETE FROM TEST.T', queryTimeoutMs: 1200000 } });
+    expect(result.isError).toBe(true);
+    expect(created).toBe(0);
+    expect(connected.auditLogger.events[0]?.outcome).toBe('denied');
+  });
+
   it('lists only tools enabled for the current config', async () => {
     const connected = await connectTestServer(
       createReadonlyConfig(['run_query']),

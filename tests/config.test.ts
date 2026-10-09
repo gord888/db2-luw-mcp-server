@@ -33,6 +33,21 @@ afterEach(() => {
 });
 
 describe('loadConfig', () => {
+  it.each(['0', '-1', '1.5', '2147483647001', '999999999999999999999'])('rejects invalid configured query timeout %s rather than disabling driver enforcement', (raw) => {
+    process.env.DB2_MCP_MODE = 'readonly';
+    process.env.DB2_MCP_API_KEY = 'readonly-key';
+    process.env.DB2_MCP_CONNECTION_STRING = 'DATABASE=SAMPLE;';
+    process.env.DB2_MCP_QUERY_TIMEOUT_MS = raw;
+    const config = loadConfig();
+    expect(config.limits.queryTimeoutMs).toBe(30000);
+    expect(config.configErrors).toContainEqual(expect.objectContaining({ variable: 'DB2_MCP_QUERY_TIMEOUT_MS' }));
+  });
+
+  it('allows a configured default longer than 30 seconds', () => {
+    process.env.DB2_MCP_QUERY_TIMEOUT_MS = '1200000';
+    expect(loadConfig().limits.queryTimeoutMs).toBe(1200000);
+  });
+
   it('loads required env vars and resolves defaults for readonly mode', () => {
     process.env.DB2_MCP_MODE = 'readonly';
     process.env.DB2_MCP_API_KEY = 'readonly-key';
