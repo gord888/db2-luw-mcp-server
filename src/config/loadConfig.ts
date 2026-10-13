@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { parseProcedureAllowlist } from './validateConfig.js';
 import { type AccessMode, type ConfigError, type ResolvedConfig, getToolsForMode } from './types.js';
+import { MAX_QUERY_TIMEOUT_MS } from '../db2/queryTimeout.js';
 
 function hashSecret(secret: string): string {
   return createHash('sha256').update(secret).digest('hex');
@@ -33,12 +34,13 @@ function parseMode(raw: string, errors: ConfigError[]): AccessMode {
   return raw as AccessMode;
 }
 
-function parsePositiveInt(name: string, raw: string, errors: ConfigError[], fallback: number): number {
-  if (!/^\s*\d+\s*$/.test(raw)) {
+function parsePositiveInt(name: string, raw: string, errors: ConfigError[], fallback: number, maximum = Number.MAX_SAFE_INTEGER): number {
+  const value = Number(raw);
+  if (!/^\s*\d+\s*$/.test(raw) || !Number.isSafeInteger(value) || value <= 0 || value > maximum) {
     errors.push({ variable: name, message: `${name} must be a positive integer. Got: "${raw}". Falling back to ${fallback}.` });
     return fallback;
   }
-  return parseInt(raw, 10);
+  return value;
 }
 
 function buildConnectionString(errors: ConfigError[]): string {
@@ -113,10 +115,10 @@ export function loadConfig(): ResolvedConfig {
   const defaultPreviewRows = parsePositiveInt('DB2_MCP_DEFAULT_PREVIEW_ROWS', defaultPreviewRowsRaw, errors, 50);
 
   const queryTimeoutRaw = optionalEnv('DB2_MCP_QUERY_TIMEOUT_MS', '30000');
-  const queryTimeoutMs = parsePositiveInt('DB2_MCP_QUERY_TIMEOUT_MS', queryTimeoutRaw, errors, 30000);
+  const queryTimeoutMs = parsePositiveInt('DB2_MCP_QUERY_TIMEOUT_MS', queryTimeoutRaw, errors, 30000, MAX_QUERY_TIMEOUT_MS);
 
   const metadataTimeoutRaw = optionalEnv('DB2_MCP_METADATA_TIMEOUT_MS', '15000');
-  const metadataTimeoutMs = parsePositiveInt('DB2_MCP_METADATA_TIMEOUT_MS', metadataTimeoutRaw, errors, 15000);
+  const metadataTimeoutMs = parsePositiveInt('DB2_MCP_METADATA_TIMEOUT_MS', metadataTimeoutRaw, errors, 15000, MAX_QUERY_TIMEOUT_MS);
 
   const requestBodyBytesRaw = optionalEnv('DB2_MCP_REQUEST_BODY_BYTES', '1048576');
   const requestBodyBytes = parsePositiveInt('DB2_MCP_REQUEST_BODY_BYTES', requestBodyBytesRaw, errors, 1048576);

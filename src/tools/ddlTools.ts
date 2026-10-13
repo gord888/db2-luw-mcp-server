@@ -5,12 +5,14 @@ import { AppError } from '../errors/AppError.js';
 import type { ToolDefinition } from './metadataTools.js';
 import type { ToolServices } from './toolContext.js';
 import { hashSql, withDbClient } from './toolContext.js';
+import { effectiveQueryTimeout, queryTimeoutSchema } from './queryTimeout.js';
 
 const identifierSchema = z.string().min(1);
 const ddlSqlSchema = z.string().min(1);
 const parameterTypesSchema = z.array(z.string().min(1)).optional();
 const genericDdlSchema = z.object({
-  sql: ddlSqlSchema
+  sql: ddlSqlSchema,
+  queryTimeoutMs: queryTimeoutSchema
 });
 
 const DB2_IDENTIFIER_PATTERN = '(?:"(?:[^"]|"")+"|[A-Za-z_#$@][A-Za-z0-9_#$@]*)';
@@ -120,11 +122,12 @@ async function executeDdl(
   label: string,
   normalizedObjectName: string,
   action: 'deploy' | 'drop',
-  objectType: 'procedure' | 'function' | 'view'
+  objectType: 'procedure' | 'function' | 'view',
+  queryTimeoutMs?: number
 ) {
   return withDbClient(services, async (client) => {
     await client.query(sql, [], {
-      timeoutMs: services.config.limits.queryTimeoutMs,
+      timeoutMs: queryTimeoutMs ?? services.config.limits.queryTimeoutMs,
       label
     });
 
@@ -133,7 +136,8 @@ async function executeDdl(
         action,
         objectType,
         objectName: normalizedObjectName,
-        sql
+        sql,
+        effectiveQueryTimeoutMs: effectiveQueryTimeout(queryTimeoutMs, services.config.limits.queryTimeoutMs)
       },
       normalizedObjectNames: [normalizedObjectName],
       sqlHash: hashSql(sql)
@@ -147,13 +151,13 @@ export function getDdlToolDefinitions(): ToolDefinition[] {
       name: 'run_ddl',
       description: 'Run a full-mode DDL statement such as CREATE, ALTER, DROP, COMMENT, or RENAME.',
       inputSchema: genericDdlSchema,
-      handler: async ({ sql }, services) => {
+      handler: async ({ sql, queryTimeoutMs }, services) => {
         const normalizedSql = normalizeDdlSql(sql);
         const statementType = classifyDdlStatement(normalizedSql);
 
         return withDbClient(services, async (client) => {
           await client.query(normalizedSql, [], {
-            timeoutMs: services.config.limits.queryTimeoutMs,
+            timeoutMs: queryTimeoutMs ?? services.config.limits.queryTimeoutMs,
             label: 'run_ddl'
           });
 
@@ -161,7 +165,8 @@ export function getDdlToolDefinitions(): ToolDefinition[] {
             data: {
               action: 'run_ddl',
               statementType,
-              sql: normalizedSql
+              sql: normalizedSql,
+              effectiveQueryTimeoutMs: effectiveQueryTimeout(queryTimeoutMs, services.config.limits.queryTimeoutMs)
             },
             sqlHash: hashSql(normalizedSql)
           };
@@ -174,9 +179,10 @@ export function getDdlToolDefinitions(): ToolDefinition[] {
       inputSchema: z.object({
         schema: identifierSchema,
         procedure: identifierSchema,
-        sql: ddlSqlSchema
+        sql: ddlSqlSchema,
+        queryTimeoutMs: queryTimeoutSchema
       }),
-      handler: async ({ schema, procedure, sql }, services) => {
+      handler: async ({ schema, procedure, sql, queryTimeoutMs }, services) => {
         const target = normalizeTarget(schema, procedure);
         const normalizedSql = assertMatchingDeploySql('PROCEDURE', target.schema, target.name, sql);
 
@@ -186,7 +192,8 @@ export function getDdlToolDefinitions(): ToolDefinition[] {
           'deploy_procedure',
           target.qualifiedName,
           'deploy',
-          'procedure'
+          'procedure',
+          queryTimeoutMs
         );
       }
     },
@@ -196,9 +203,10 @@ export function getDdlToolDefinitions(): ToolDefinition[] {
       inputSchema: z.object({
         schema: identifierSchema,
         procedure: identifierSchema,
-        parameterTypes: parameterTypesSchema
+        parameterTypes: parameterTypesSchema,
+        queryTimeoutMs: queryTimeoutSchema
       }),
-      handler: async ({ schema, procedure, parameterTypes }, services) => {
+      handler: async ({ schema, procedure, parameterTypes, queryTimeoutMs }, services) => {
         const target = normalizeTarget(schema, procedure);
         const sql = `DROP PROCEDURE ${qualifyObjectName(target.schema, target.name)}${buildRoutineSignature(parameterTypes)}`;
 
@@ -208,7 +216,8 @@ export function getDdlToolDefinitions(): ToolDefinition[] {
           'drop_procedure',
           target.qualifiedName,
           'drop',
-          'procedure'
+          'procedure',
+          queryTimeoutMs
         );
       }
     },
@@ -218,9 +227,10 @@ export function getDdlToolDefinitions(): ToolDefinition[] {
       inputSchema: z.object({
         schema: identifierSchema,
         function: identifierSchema,
-        sql: ddlSqlSchema
+        sql: ddlSqlSchema,
+        queryTimeoutMs: queryTimeoutSchema
       }),
-      handler: async ({ schema, function: functionName, sql }, services) => {
+      handler: async ({ schema, function: functionName, sql, queryTimeoutMs }, services) => {
         const target = normalizeTarget(schema, functionName);
         const normalizedSql = assertMatchingDeploySql('FUNCTION', target.schema, target.name, sql);
 
@@ -230,7 +240,8 @@ export function getDdlToolDefinitions(): ToolDefinition[] {
           'deploy_function',
           target.qualifiedName,
           'deploy',
-          'function'
+          'function',
+          queryTimeoutMs
         );
       }
     },
@@ -240,9 +251,10 @@ export function getDdlToolDefinitions(): ToolDefinition[] {
       inputSchema: z.object({
         schema: identifierSchema,
         function: identifierSchema,
-        parameterTypes: parameterTypesSchema
+        parameterTypes: parameterTypesSchema,
+        queryTimeoutMs: queryTimeoutSchema
       }),
-      handler: async ({ schema, function: functionName, parameterTypes }, services) => {
+      handler: async ({ schema, function: functionName, parameterTypes, queryTimeoutMs }, services) => {
         const target = normalizeTarget(schema, functionName);
         const sql = `DROP FUNCTION ${qualifyObjectName(target.schema, target.name)}${buildRoutineSignature(parameterTypes)}`;
 
@@ -252,7 +264,8 @@ export function getDdlToolDefinitions(): ToolDefinition[] {
           'drop_function',
           target.qualifiedName,
           'drop',
-          'function'
+          'function',
+          queryTimeoutMs
         );
       }
     },
@@ -262,9 +275,10 @@ export function getDdlToolDefinitions(): ToolDefinition[] {
       inputSchema: z.object({
         schema: identifierSchema,
         view: identifierSchema,
-        sql: ddlSqlSchema
+        sql: ddlSqlSchema,
+        queryTimeoutMs: queryTimeoutSchema
       }),
-      handler: async ({ schema, view, sql }, services) => {
+      handler: async ({ schema, view, sql, queryTimeoutMs }, services) => {
         const target = normalizeTarget(schema, view);
         const normalizedSql = assertMatchingDeploySql('VIEW', target.schema, target.name, sql);
 
@@ -274,7 +288,8 @@ export function getDdlToolDefinitions(): ToolDefinition[] {
           'deploy_view',
           target.qualifiedName,
           'deploy',
-          'view'
+          'view',
+          queryTimeoutMs
         );
       }
     },
@@ -283,9 +298,10 @@ export function getDdlToolDefinitions(): ToolDefinition[] {
       description: 'Drop a view in full mode.',
       inputSchema: z.object({
         schema: identifierSchema,
-        view: identifierSchema
+        view: identifierSchema,
+        queryTimeoutMs: queryTimeoutSchema
       }),
-      handler: async ({ schema, view }, services) => {
+      handler: async ({ schema, view, queryTimeoutMs }, services) => {
         const target = normalizeTarget(schema, view);
         const sql = `DROP VIEW ${qualifyObjectName(target.schema, target.name)}`;
 
@@ -295,7 +311,8 @@ export function getDdlToolDefinitions(): ToolDefinition[] {
           'drop_view',
           target.qualifiedName,
           'drop',
-          'view'
+          'view',
+          queryTimeoutMs
         );
       }
     }

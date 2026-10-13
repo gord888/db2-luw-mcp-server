@@ -4,6 +4,7 @@ import { buildPagingResult, normalizeLimit, wrapSqlWithPaging } from '../db2/sql
 import { qualifyTable } from '../db2/identifiers.js';
 import type { ToolExecutionPayload, ToolServices } from './toolContext.js';
 import { withDbClient } from './toolContext.js';
+import { effectiveQueryTimeout, queryTimeoutSchema } from './queryTimeout.js';
 
 export interface ToolDefinition {
   name: string;
@@ -353,9 +354,10 @@ export function getMetadataToolDefinitions(): ToolDefinition[] {
         schema: z.string(),
         table: z.string(),
         limit: z.number().int().positive().optional(),
-        offset: z.number().int().min(0).optional()
+        offset: z.number().int().min(0).optional(),
+        queryTimeoutMs: queryTimeoutSchema
       }),
-      handler: async ({ schema, table, limit, offset }, services) => withDbClient(services, async (client) => {
+      handler: async ({ schema, table, limit, offset, queryTimeoutMs }, services) => withDbClient(services, async (client) => {
         const normalizedSchema = schema.toUpperCase();
         const normalizedTable = table.toUpperCase();
         const normalizedOffset = offset ?? 0;
@@ -363,13 +365,13 @@ export function getMetadataToolDefinitions(): ToolDefinition[] {
         const sql = `SELECT * FROM ${qualifyTable(normalizedSchema, normalizedTable)}`;
         const query = wrapSqlWithPaging(sql, safeLimit, normalizedOffset);
         const result = await client.query<Record<string, unknown>>(query, [], {
-          timeoutMs: services.config.limits.queryTimeoutMs,
+          timeoutMs: queryTimeoutMs ?? services.config.limits.queryTimeoutMs,
           label: 'preview_table'
         });
         const paging = buildPagingResult(result.rows, safeLimit, normalizedOffset, [...warnings, ...result.warnings]);
 
         return {
-          data: paging,
+          data: { ...paging, effectiveQueryTimeoutMs: effectiveQueryTimeout(queryTimeoutMs, services.config.limits.queryTimeoutMs) },
           rowCount: paging.rowCount,
           truncated: paging.truncated,
           normalizedObjectNames: [`${normalizedSchema}.${normalizedTable}`]
